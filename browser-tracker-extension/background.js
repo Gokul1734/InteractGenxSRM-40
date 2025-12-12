@@ -96,8 +96,7 @@ async function startRecording(userCode, sessionCode) {
   
   // Update storage
   chrome.storage.local.set({ 
-    is_recording: true,
-    event_count: 0 
+    is_recording: true
   });
   
   // Initial save when starting
@@ -147,18 +146,6 @@ function addEvent(eventType, context) {
   };
   
   recordingData.navigation_events.push(event);
-  
-  // Update event count in storage and notify popup
-  const count = recordingData.navigation_events.length;
-  chrome.storage.local.set({ event_count: count });
-  
-  // Notify popup of count update (if open)
-  chrome.runtime.sendMessage({ 
-    action: 'EVENT_COUNT_UPDATE', 
-    count: count 
-  }).catch(() => {
-    // Popup might be closed, ignore error
-  });
   
   console.log(`EVENT: ${eventType}`, context);
   
@@ -249,8 +236,7 @@ async function stopRecording() {
   
   // Update storage
   chrome.storage.local.set({ 
-    is_recording: false,
-    event_count: eventCount
+    is_recording: false
   });
   
   // Clear auto-save timeout
