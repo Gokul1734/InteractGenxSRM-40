@@ -39,23 +39,60 @@ const createSession = async (req, res) => {
     // Auto-generate unique session_code with 'S' suffix (format: XXXXXXS)
     const session_code = await Session.generateSessionCode();
 
-    // Create session with creator's ObjectId
+    // Prepare creator member data
+    const creatorMember = {
+      user: creatorUser._id,
+      user_code: creatorUser.user_code,
+      user_name: creatorUser.user_name,
+      is_active: true,
+      joined_at: new Date()
+    };
+
+    // Create session with creator's ObjectId and auto-add creator as first member
     const session = await Session.create({
       session_code,
       session_name: session_name || `Session ${session_code}`,
       session_description: session_description.trim(),
       created_by: creatorUser._id,
-      members: [],
+      members: [creatorMember],
       is_active: true
     });
 
-    // Populate created_by for response
-    await session.populate('created_by', 'user_name user_code user_email');
+    console.log(`✓ Session ${session_code} created with ${session.members.length} member(s):`, session.members.map(m => m.user_code));
+
+    // Re-fetch from database to ensure we return the persisted data with all fields
+    const savedSession = await Session.findById(session._id)
+      .populate('created_by', 'user_name user_code user_email');
+
+    if (!savedSession) {
+      throw new Error('Session was created but could not be retrieved');
+    }
+
+    // Verify creator is in members - if not, add them now
+    const creatorInMembers = savedSession.members.some(
+      m => m.user_code === creatorUser.user_code
+    );
+
+    if (!creatorInMembers) {
+      console.log(`⚠ Creator ${creatorUser.user_code} not found in members, adding now...`);
+      savedSession.members.push(creatorMember);
+      await savedSession.save();
+      console.log(`✓ Creator added to members. Total members: ${savedSession.members.length}`);
+    }
+
+    // Build response with explicit member data
+    const responseData = {
+      ...savedSession.toObject(),
+      member_count: savedSession.members.length,
+      active_member_count: savedSession.members.filter(m => m.is_active).length
+    };
+
+    console.log(`✓ Returning session with ${responseData.members.length} member(s)`);
 
     res.status(201).json({
       success: true,
       message: 'Session created successfully',
-      data: session
+      data: responseData
     });
 
   } catch (error) {
@@ -128,6 +165,26 @@ const getSessionByCode = async (req, res) => {
         success: false,
         message: 'Session not found'
       });
+    }
+
+    // Ensure creator is in members (safety check for older sessions)
+    if (session.created_by) {
+      const creatorInMembers = session.members.some(
+        m => m.user_code === session.created_by.user_code
+      );
+
+      if (!creatorInMembers) {
+        console.log(`⚠ getSessionByCode: Creator ${session.created_by.user_code} not in members, adding now...`);
+        session.members.push({
+          user: session.created_by._id,
+          user_code: session.created_by.user_code,
+          user_name: session.created_by.user_name,
+          is_active: true,
+          joined_at: session.started_at || session.createdAt || new Date()
+        });
+        await session.save();
+        console.log(`✓ Creator added to session ${session_code}. Total members: ${session.members.length}`);
+      }
     }
 
     res.status(200).json({
@@ -618,10 +675,9 @@ const getLiveUpdate = async (req, res) => {
     const { session_code } = req.params;
     const { since } = req.query; // Optional: get only updates after this timestamp
 
-    // Get session with members (using lean() for faster query)
+    // Get session with members
     const session = await Session.findOne({ session_code })
-      .populate('created_by', 'user_name user_code user_email')
-      .lean();
+      .populate('created_by', 'user_name user_code user_email');
 
     if (!session) {
       return res.status(404).json({
@@ -630,12 +686,34 @@ const getLiveUpdate = async (req, res) => {
       });
     }
 
-    // Get all member user_codes from the session
-    const memberUserCodes = session.members
-      .filter(m => m.is_active)
-      .map(m => m.user_code);
+    // Ensure creator is in members (safety check for older sessions)
+    let membersUpdated = false;
+    if (session.created_by) {
+      const creatorInMembers = session.members.some(
+        m => m.user_code === session.created_by.user_code
+      );
+
+      if (!creatorInMembers) {
+        console.log(`⚠ getLiveUpdate: Creator ${session.created_by.user_code} not in members for session ${session_code}, adding now...`);
+        session.members.push({
+          user: session.created_by._id,
+          user_code: session.created_by.user_code,
+          user_name: session.created_by.user_name,
+          is_active: true,
+          joined_at: session.started_at || session.createdAt || new Date()
+        });
+        await session.save();
+        membersUpdated = true;
+        console.log(`✓ Creator added to session ${session_code}. Total members: ${session.members.length}`);
+      }
+    }
+
+    // Get all member user_codes from the session (active members)
+    const activeMembers = session.members.filter(m => m.is_active);
+    const memberUserCodes = activeMembers.map(m => m.user_code);
 
     if (memberUserCodes.length === 0) {
+      // No active members - but still return session info
       return res.status(200).json({
         success: true,
         timestamp: new Date().toISOString(),
@@ -647,8 +725,12 @@ const getLiveUpdate = async (req, res) => {
           started_at: session.started_at,
           created_by: session.created_by
         },
-        member_count: 0,
-        active_recording_count: 0,
+        summary: {
+          member_count: 0,
+          active_recording_count: 0,
+          total_events: 0,
+          has_any_updates: false
+        },
         members: []
       });
     }
@@ -766,6 +848,70 @@ const getLiveUpdate = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Fix existing sessions - add creator to members if not already present
+ * @route   POST /api/sessions/fix-creator-members
+ * @access  Public
+ */
+const fixCreatorMembers = async (req, res) => {
+  try {
+    // Find all sessions
+    const sessions = await Session.find({}).populate('created_by', 'user_name user_code user_email');
+    
+    let fixed = 0;
+    let alreadyOk = 0;
+    const results = [];
+
+    for (const session of sessions) {
+      if (!session.created_by) {
+        results.push({ session_code: session.session_code, status: 'skipped', reason: 'No creator' });
+        continue;
+      }
+
+      // Check if creator is already in members
+      const creatorInMembers = session.members.some(
+        m => m.user_code === session.created_by.user_code
+      );
+
+      if (creatorInMembers) {
+        alreadyOk++;
+        results.push({ session_code: session.session_code, status: 'ok', reason: 'Creator already in members' });
+      } else {
+        // Add creator to members
+        session.members.push({
+          user: session.created_by._id,
+          user_code: session.created_by.user_code,
+          user_name: session.created_by.user_name,
+          is_active: true,
+          joined_at: session.started_at || session.createdAt || new Date()
+        });
+        await session.save();
+        fixed++;
+        results.push({ session_code: session.session_code, status: 'fixed', reason: 'Added creator to members' });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Fixed ${fixed} sessions, ${alreadyOk} were already correct`,
+      data: {
+        total_sessions: sessions.length,
+        fixed,
+        already_ok: alreadyOk,
+        details: results
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fixing creator members:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   createSession,
   getAllSessions,
@@ -779,6 +925,7 @@ module.exports = {
   endSession,
   validateSessionCode,
   getFullSessionData,
-  getLiveUpdate
+  getLiveUpdate,
+  fixCreatorMembers
 };
 

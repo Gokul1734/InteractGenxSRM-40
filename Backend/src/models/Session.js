@@ -80,6 +80,44 @@ SessionSchema.index({ session_code: 1 });
 SessionSchema.index({ 'members.user_code': 1 });
 SessionSchema.index({ is_active: 1 });
 
+// Pre-save hook to ensure creator is always in members list
+SessionSchema.pre('save', async function(next) {
+  // Only proceed if created_by exists
+  if (!this.created_by) {
+    return next();
+  }
+
+  // Check if creator is already in members by comparing user ObjectIds
+  const creatorInMembers = this.members.some(
+    member => member.user && member.user.toString() === this.created_by.toString()
+  );
+
+  // If creator is not in members, we need to fetch user details and add them
+  if (!creatorInMembers) {
+    try {
+      // Fetch the creator user to get their details
+      const User = mongoose.model('User');
+      const creatorUser = await User.findById(this.created_by);
+      
+      if (creatorUser) {
+        // Add creator to members list
+        this.members.push({
+          user: creatorUser._id,
+          user_code: creatorUser.user_code,
+          user_name: creatorUser.user_name,
+          is_active: true,
+          joined_at: this.started_at || this.createdAt || new Date()
+        });
+      }
+    } catch (error) {
+      // If user fetch fails, log but don't block save
+      console.warn('Warning: Could not fetch creator user in pre-save hook:', error.message);
+    }
+  }
+
+  next();
+});
+
 // Virtual for member count
 SessionSchema.virtual('member_count').get(function() {
   return this.members.filter(m => m.is_active).length;
@@ -186,12 +224,19 @@ SessionSchema.statics.findOrCreateSession = async function(sessionCode, sessionN
       throw new Error('Creator user is required to create a new session');
     }
     
+    // Auto-add creator as first member
     session = await this.create({
       session_code: code,
       session_name: sessionName || `Session ${code}`,
       session_description: sessionDescription || `Tracking session ${code}`,
       created_by: creatorUser._id,
-      members: [],
+      members: [{
+        user: creatorUser._id,
+        user_code: creatorUser.user_code,
+        user_name: creatorUser.user_name,
+        is_active: true,
+        joined_at: new Date()
+      }],
       is_active: true
     });
   }

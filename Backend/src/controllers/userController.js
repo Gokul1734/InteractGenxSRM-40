@@ -280,15 +280,59 @@ const getUserSessions = async (req, res) => {
       });
     }
 
-    // Find all sessions where user is a member
+    // First find the user to get their ObjectId
+    const user = await User.findOne({ user_code: user_code.toUpperCase() });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Find all sessions where user is a member OR is the creator
     const sessions = await Session.find({
-      'members.user_code': user_code.toUpperCase()
-    }).select('-__v');
+      $or: [
+        { 'members.user_code': user_code.toUpperCase() },
+        { created_by: user._id }
+      ]
+    })
+      .populate('created_by', 'user_name user_code user_email')
+      .sort({ createdAt: -1 })
+      .select('-__v');
+
+    // Ensure creator is in members for each session (safety check for older sessions)
+    const sessionsWithCounts = await Promise.all(sessions.map(async (session) => {
+      // Check if creator should be added to members
+      if (session.created_by) {
+        const creatorInMembers = session.members.some(
+          m => m.user_code === session.created_by.user_code
+        );
+
+        if (!creatorInMembers) {
+          console.log(`⚠ getUserSessions: Adding creator ${session.created_by.user_code} to session ${session.session_code}`);
+          session.members.push({
+            user: session.created_by._id,
+            user_code: session.created_by.user_code,
+            user_name: session.created_by.user_name,
+            is_active: true,
+            joined_at: session.started_at || session.createdAt || new Date()
+          });
+          await session.save();
+        }
+      }
+
+      return {
+        ...session.toObject(),
+        member_count: session.members.length,
+        active_member_count: session.members.filter(m => m.is_active).length
+      };
+    }));
 
     res.status(200).json({
       success: true,
       count: sessions.length,
-      data: sessions
+      data: sessionsWithCounts
     });
 
   } catch (error) {

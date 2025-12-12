@@ -1,24 +1,71 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import AuthPage from './pages/AuthPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [activeKey, setActiveKey] = useState('home');
+  const [loading, setLoading] = useState(true);
+
+  // Check for stored user on mount
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        if (parsed && parsed.user_code) {
+          setUser({
+            name: parsed.user_name,
+            email: parsed.user_email,
+            user_code: parsed.user_code,
+            _id: parsed._id,
+            is_active: parsed.is_active,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to parse stored user:', err);
+        localStorage.removeItem('user');
+      }
+    }
+    setLoading(false);
+  }, []);
+
+  const handleAuth = (userData) => {
+    setUser(userData);
+    setActiveKey('home');
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('user');
+    setUser(null);
+    setActiveKey('home');
+  };
+
+  // Show loading state briefly while checking stored user
+  if (loading) {
+    return (
+      <div 
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: 'var(--color-background)' }}
+      >
+        <div className="flex flex-col items-center gap-3">
+          <div 
+            className="h-10 w-10 rounded-lg animate-pulse"
+            style={{ background: 'var(--color-primary)' }}
+          />
+          <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            Loading...
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
       <AuthPage
-        onLogin={({ name, email }) => {
-          // Later: check in DB
-          setUser({ name, email });
-          setActiveKey('home');
-        }}
-        onSignup={({ name, email }) => {
-          // Later: add to DB
-          setUser({ name, email });
-          setActiveKey('home');
-        }}
+        onLogin={handleAuth}
+        onSignup={handleAuth}
       />
     );
   }
@@ -28,10 +75,7 @@ export default function App() {
       user={user}
       activeKey={activeKey}
       onNavigate={setActiveKey}
-      onLogout={() => {
-        setUser(null);
-        setActiveKey('home');
-      }}
+      onLogout={handleLogout}
     />
   );
 }
