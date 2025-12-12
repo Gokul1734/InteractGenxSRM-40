@@ -5,7 +5,8 @@
 // ENVIRONMENT CONFIGURATION
 // ============================================================================
 // Set to 'production' for deployed backend, 'development' for local testing
-const ENVIRONMENT = 'production'; // Change to 'development' for local testing
+// Defaulting to local per project setup.
+const ENVIRONMENT = 'development';
 
 // ============================================================================
 // URL CONFIGURATIONS
