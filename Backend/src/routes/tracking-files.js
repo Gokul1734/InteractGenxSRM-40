@@ -201,11 +201,14 @@ router.post('/update', async (req, res) => {
 });
 
 // @route   POST /api/tracking-files/stop
-// @desc    Finalize tracking session
+// @desc    Stop recording for a specific user in a session (user-specific)
+// @note    This endpoint ONLY stops the recording for the specified user.
+//          It does NOT affect other users' recordings in the same session.
+//          To end the entire session for all users, use /api/sessions/:session_code/end instead.
 // @access  Public
 router.post('/stop', async (req, res) => {
   try {
-    const { user_code, session_code } = req.body;
+    const { user_code, session_code, user_id } = req.body;
 
     if (!user_code || !session_code) {
       return res.status(400).json({
@@ -218,27 +221,41 @@ router.post('/stop', async (req, res) => {
     const normalizedUserCode = String(user_code).toUpperCase();
     const normalizedSessionCode = String(session_code);
 
-    const tracking = await NavigationTracking.findOne({
+    // Build query to find ONLY this specific user's active recording
+    // This ensures we only stop recording for the requesting user, not all users in the session
+    const query = {
       user_code: normalizedUserCode,
       session_code: normalizedSessionCode,
       is_active: true
-    });
+    };
+
+    // If user_id is provided, also filter by it for additional specificity
+    if (user_id) {
+      query.user = user_id;
+    }
+
+    // Use findOne (not findMany) to ensure we only get ONE user's recording
+    const tracking = await NavigationTracking.findOne(query);
 
     if (!tracking) {
       return res.status(404).json({
         success: false,
-        message: 'Active session not found'
+        message: `Active recording session not found for user ${normalizedUserCode} in session ${normalizedSessionCode}`
       });
     }
 
+    // Stop recording for THIS specific user only
     await tracking.endRecording();
 
-    console.log(`✓ Session stopped: ${normalizedUserCode}_${normalizedSessionCode}`);
+    console.log(`✓ User-specific recording stopped: User ${normalizedUserCode} in session ${normalizedSessionCode} (Tracking ID: ${tracking._id})`);
 
     res.status(200).json({
       success: true,
-      message: 'Tracking session stopped',
+      message: `Recording stopped for user ${normalizedUserCode}`,
       data: {
+        user_code: normalizedUserCode,
+        session_code: normalizedSessionCode,
+        tracking_id: tracking._id,
         folder: `${normalizedUserCode}_${normalizedSessionCode}`,
         event_count: tracking.event_count,
         duration_ms: tracking.recording_ended_at - tracking.recording_started_at

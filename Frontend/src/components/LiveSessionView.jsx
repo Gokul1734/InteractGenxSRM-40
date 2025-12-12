@@ -6,11 +6,13 @@ import {
 } from 'lucide-react';
 import { sessionAPI } from '../services/api.js';
 
-function MemberCard({ member, expanded, onToggle }) {
+function MemberCard({ member, expanded, onToggle, memberNumber }) {
   const isRecording = member.is_recording || member.has_tracking;
-  const currentState = member.current_state || member.navigation_tracking?.last_event;
-  // Use accumulated events if available, otherwise fall back to recent_events or navigation_tracking
-  const allEvents = member.all_accumulated_events || 
+  // Use current_state from API (which now shows latest PAGE_LOADED event)
+  const currentState = member.current_state;
+  // Use navigation_events from API (which now only contains PAGE_LOADED events, unique by URL)
+  const allEvents = member.navigation_events || 
+                    member.all_accumulated_events || 
                     member.navigation_tracking?.navigation_events || 
                     member.recent_events || 
                     [];
@@ -111,13 +113,13 @@ function MemberCard({ member, expanded, onToggle }) {
       >
         <div className="flex items-center gap-3">
           <div 
-            className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold"
+            className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold shrink-0"
             style={{ 
               background: 'var(--color-surface-dark)',
               color: 'var(--color-text-primary)',
             }}
           >
-            {member.user_name?.charAt(0)?.toUpperCase() || '?'}
+            {memberNumber !== undefined ? memberNumber : (member.user_name?.charAt(0)?.toUpperCase() || '?')}
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -218,73 +220,6 @@ function MemberCard({ member, expanded, onToggle }) {
         </div>
       )}
 
-      {/* Expanded: Unique Pages */}
-      {expanded && uniquePages.length > 0 && (
-        <div 
-          className="border-t"
-          style={{ borderColor: 'var(--color-border)' }}
-        >
-          <div 
-            className="px-4 py-2 text-xs font-medium sticky top-0"
-            style={{ 
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-secondary)',
-            }}
-          >
-            Visited Pages ({uniquePages.length})
-          </div>
-          <div 
-            className="px-4 pb-3 space-y-2 max-h-64 overflow-y-auto"
-          >
-            {uniquePages.map((page, idx) => (
-              <div
-                key={page.url || idx}
-                className="flex items-start gap-2 p-2 rounded-lg transition-colors hover:bg-opacity-50"
-                style={{
-                  background: idx === 0 ? 'rgba(34, 197, 94, 0.1)' : 'var(--color-surface-dark)',
-                  border: '1px solid',
-                  borderColor: idx === 0 ? 'rgba(34, 197, 94, 0.2)' : 'var(--color-border)',
-                }}
-              >
-                {page.favicon ? (
-                  <img 
-                    src={page.favicon} 
-                    alt="" 
-                    className="w-4 h-4 mt-0.5 rounded shrink-0"
-                    onError={(e) => e.target.style.display = 'none'}
-                  />
-                ) : (
-                  <Globe size={14} className="mt-0.5 shrink-0" style={{ color: 'var(--color-primary)' }} />
-                )}
-                <div className="flex-1 min-w-0">
-                  <div 
-                    className="text-sm font-medium truncate"
-                    style={{ color: 'var(--color-text-primary)' }}
-                  >
-                    {page.title || 'Untitled'}
-                  </div>
-                  <a
-                    href={page.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs truncate flex items-center gap-1 hover:underline"
-                    style={{ color: 'var(--color-text-tertiary)' }}
-                  >
-                    {page.url}
-                    <ExternalLink size={10} />
-                  </a>
-                  <div 
-                    className="text-xs mt-1"
-                    style={{ color: 'var(--color-text-tertiary)' }}
-                  >
-                    {formatTime(page.lastSeen)}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Expanded: Recent Events */}
       {expanded && recentEvents.length > 0 && (
@@ -356,26 +291,22 @@ export default function LiveSessionView({ session, user, onBack }) {
       );
       
       if (response.success) {
-        // Merge new events with accumulated events for each member
+        // Use navigation_events from API (already filtered to PAGE_LOADED and unique by URL)
+        // Accumulate all PAGE_LOADED events for each member
         const updatedMembers = response.members?.map(member => {
           const userCode = member.user_code;
           const existingEvents = accumulatedEventsRef.current.get(userCode) || [];
-          const newEvents = member.recent_events || [];
+          // Use navigation_events which contains all PAGE_LOADED events (unique by URL)
+          const newEvents = member.navigation_events || [];
           
-          // Create a Set to track unique events by timestamp + event_type + url + tab_id
-          // This ensures we don't miss legitimate duplicate events from different contexts
-          const eventKey = (e) => {
-            const url = e.context?.url || e.context?.full_url || '';
-            const tabId = e.context?.tab_id || '';
-            return `${e.timestamp}-${e.event_type}-${url}-${tabId}`;
-          };
-          const existingKeys = new Set(existingEvents.map(eventKey));
+          // Create a Set to track unique events by URL (since backend already ensures uniqueness)
+          const existingUrls = new Set(existingEvents.map(e => e.context?.url || e.context?.full_url || ''));
           
-          // Add only truly new events (not duplicates)
+          // Add only new events (by URL)
           const uniqueNewEvents = newEvents.filter(e => {
-            const key = eventKey(e);
-            if (!existingKeys.has(key)) {
-              existingKeys.add(key); // Prevent duplicates within newEvents batch
+            const url = e.context?.url || e.context?.full_url || '';
+            if (url && !existingUrls.has(url)) {
+              existingUrls.add(url);
               return true;
             }
             return false;
@@ -389,10 +320,11 @@ export default function LiveSessionView({ session, user, onBack }) {
           // Update accumulated events
           accumulatedEventsRef.current.set(userCode, allEvents);
           
-          // Return member with all accumulated events
+          // Return member with all accumulated events and navigation_events
           return {
             ...member,
-            all_accumulated_events: allEvents
+            all_accumulated_events: allEvents,
+            navigation_events: allEvents // Use accumulated events
           };
         }) || [];
         
@@ -458,6 +390,78 @@ export default function LiveSessionView({ session, user, onBack }) {
   const sessionInfo = liveData?.session || session;
   const members = liveData?.members || [];
   const summary = liveData?.summary || {};
+
+  // Aggregate all PAGE_LOADED events from all members
+  // Each event is already unique by URL from the backend
+  const allUniquePages = useMemo(() => {
+    const pageMap = new Map();
+    
+    members.forEach(member => {
+      // Use navigation_events which now only contains PAGE_LOADED events (unique by URL)
+      const pageLoadedEvents = member.navigation_events || 
+                               member.all_accumulated_events || 
+                               [];
+      
+      pageLoadedEvents.forEach(event => {
+        const url = event.context?.url || event.context?.full_url;
+        if (url && event.event_type === 'PAGE_LOADED') {
+          if (!pageMap.has(url)) {
+            let domain = event.context?.domain;
+            if (!domain) {
+              try {
+                domain = new URL(url).hostname;
+              } catch (e) {
+                domain = url;
+              }
+            }
+            pageMap.set(url, {
+              url: url,
+              title: event.context?.title || url,
+              favicon: event.context?.favicon || event.context?.favIconUrl,
+              lastSeen: event.timestamp,
+              eventType: event.event_type,
+              domain: domain,
+              visitedBy: [member.user_name || member.user_code]
+            });
+          } else {
+            const existing = pageMap.get(url);
+            // Update with most recent timestamp if newer
+            if (new Date(event.timestamp) > new Date(existing.lastSeen)) {
+              existing.lastSeen = event.timestamp;
+              existing.eventType = event.event_type;
+              if (event.context?.title && !existing.title) {
+                existing.title = event.context.title;
+              }
+              const favicon = event.context?.favicon || event.context?.favIconUrl;
+              if (favicon && !existing.favicon) {
+                existing.favicon = favicon;
+              }
+            }
+            // Add member to visitedBy if not already there
+            const memberName = member.user_name || member.user_code;
+            if (!existing.visitedBy.includes(memberName)) {
+              existing.visitedBy.push(memberName);
+            }
+          }
+        }
+      });
+    });
+
+    // Sort by last seen (most recent first)
+    return Array.from(pageMap.values()).sort((a, b) => 
+      new Date(b.lastSeen) - new Date(a.lastSeen)
+    );
+  }, [members]);
+
+  const formatTime = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return date.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -636,15 +640,139 @@ export default function LiveSessionView({ session, user, onBack }) {
             </p>
           </div>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {members.map((member) => (
-              <MemberCard
-                key={member.user_code}
-                member={member}
-                expanded={expandedMembers.has(member.user_code)}
-                onToggle={() => toggleMember(member.user_code)}
-              />
-            ))}
+          <div className="flex gap-6 items-start">
+            {/* Left Column: Members List */}
+            <div className="flex-1 min-w-0 space-y-4">
+              {members.map((member, index) => (
+                <MemberCard
+                  key={member.user_code}
+                  member={member}
+                  memberNumber={index + 1}
+                  expanded={expandedMembers.has(member.user_code)}
+                  onToggle={() => toggleMember(member.user_code)}
+                />
+              ))}
+            </div>
+
+            {/* Right Column: Visited Pages */}
+            <div 
+              className="w-96 shrink-0 rounded-xl overflow-hidden flex flex-col"
+              style={{
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                maxHeight: 'calc(100vh - 200px)',
+              }}
+            >
+              <div 
+                className="px-4 py-3 border-b shrink-0"
+                style={{ 
+                  background: 'var(--color-surface)',
+                  borderColor: 'var(--color-border)',
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Globe size={16} style={{ color: 'var(--color-primary)' }} />
+                  <h2 
+                    className="text-sm font-semibold"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    Visited Pages by team!
+                  </h2>
+                  <span 
+                    className="text-xs px-2 py-0.5 rounded-full"
+                    style={{ 
+                      background: 'var(--color-surface-dark)',
+                      color: 'var(--color-text-secondary)',
+                    }}
+                  >
+                    {allUniquePages.length}
+                  </span>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {allUniquePages.length === 0 ? (
+                  <div className="p-6 text-center">
+                    <Globe 
+                      size={32} 
+                      className="mx-auto mb-2"
+                      style={{ color: 'var(--color-text-tertiary)' }}
+                    />
+                    <p 
+                      className="text-sm"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      No pages visited yet
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-4 space-y-2">
+                    {allUniquePages.map((page, idx) => (
+                      <div
+                        key={page.url || idx}
+                        className="flex items-start gap-2 p-3 rounded-lg transition-colors hover:bg-opacity-50"
+                        style={{
+                          background: idx === 0 ? 'rgba(34, 197, 94, 0.1)' : 'var(--color-surface-dark)',
+                          border: '1px solid',
+                          borderColor: idx === 0 ? 'rgba(34, 197, 94, 0.2)' : 'var(--color-border)',
+                        }}
+                      >
+                        {page.favicon ? (
+                          <img 
+                            src={page.favicon} 
+                            alt="" 
+                            className="w-5 h-5 mt-0.5 rounded shrink-0"
+                            onError={(e) => e.target.style.display = 'none'}
+                          />
+                        ) : (
+                          <Globe size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--color-primary)' }} />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div 
+                            className="text-sm font-medium truncate mb-1"
+                            style={{ color: 'var(--color-text-primary)' }}
+                          >
+                            {page.title || 'Untitled'}
+                          </div>
+                          <a
+                            href={page.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs truncate flex items-center gap-1 hover:underline mb-1"
+                            style={{ color: 'var(--color-text-tertiary)' }}
+                          >
+                            {page.url}
+                            <ExternalLink size={10} />
+                          </a>
+                          <div className="flex items-center gap-2 flex-wrap mt-1">
+                            {page.visitedBy && page.visitedBy.length > 0 && (
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <User size={12} style={{ color: 'var(--color-text-tertiary)' }} />
+                                <span 
+                                  className="text-xs font-medium"
+                                  style={{ color: 'var(--color-text-secondary)' }}
+                                >
+                                  {page.visitedBy.length === 1 
+                                    ? page.visitedBy[0]
+                                    : `${page.visitedBy.join(', ')}`
+                                  }
+                                </span>
+                              </div>
+                            )}
+                            <span style={{ color: 'var(--color-text-tertiary)' }}>•</span>
+                            <span 
+                              className="text-xs"
+                              style={{ color: 'var(--color-text-tertiary)' }}
+                            >
+                              {formatTime(page.lastSeen)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
