@@ -8,9 +8,11 @@ import { sessionAPI } from '../services/api.js';
 
 function MemberCard({ member, expanded, onToggle, memberNumber }) {
   const isRecording = member.is_recording || member.has_tracking;
-  const currentState = member.current_state || member.navigation_tracking?.last_event;
-  // Use accumulated events if available, otherwise fall back to recent_events or navigation_tracking
-  const allEvents = member.all_accumulated_events || 
+  // Use current_state from API (which now shows latest PAGE_LOADED event)
+  const currentState = member.current_state;
+  // Use navigation_events from API (which now only contains PAGE_LOADED events, unique by URL)
+  const allEvents = member.navigation_events || 
+                    member.all_accumulated_events || 
                     member.navigation_tracking?.navigation_events || 
                     member.recent_events || 
                     [];
@@ -289,26 +291,22 @@ export default function LiveSessionView({ session, user, onBack }) {
       );
       
       if (response.success) {
-        // Merge new events with accumulated events for each member
+        // Use navigation_events from API (already filtered to PAGE_LOADED and unique by URL)
+        // Accumulate all PAGE_LOADED events for each member
         const updatedMembers = response.members?.map(member => {
           const userCode = member.user_code;
           const existingEvents = accumulatedEventsRef.current.get(userCode) || [];
-          const newEvents = member.recent_events || [];
+          // Use navigation_events which contains all PAGE_LOADED events (unique by URL)
+          const newEvents = member.navigation_events || [];
           
-          // Create a Set to track unique events by timestamp + event_type + url + tab_id
-          // This ensures we don't miss legitimate duplicate events from different contexts
-          const eventKey = (e) => {
-            const url = e.context?.url || e.context?.full_url || '';
-            const tabId = e.context?.tab_id || '';
-            return `${e.timestamp}-${e.event_type}-${url}-${tabId}`;
-          };
-          const existingKeys = new Set(existingEvents.map(eventKey));
+          // Create a Set to track unique events by URL (since backend already ensures uniqueness)
+          const existingUrls = new Set(existingEvents.map(e => e.context?.url || e.context?.full_url || ''));
           
-          // Add only truly new events (not duplicates)
+          // Add only new events (by URL)
           const uniqueNewEvents = newEvents.filter(e => {
-            const key = eventKey(e);
-            if (!existingKeys.has(key)) {
-              existingKeys.add(key); // Prevent duplicates within newEvents batch
+            const url = e.context?.url || e.context?.full_url || '';
+            if (url && !existingUrls.has(url)) {
+              existingUrls.add(url);
               return true;
             }
             return false;
@@ -322,10 +320,11 @@ export default function LiveSessionView({ session, user, onBack }) {
           // Update accumulated events
           accumulatedEventsRef.current.set(userCode, allEvents);
           
-          // Return member with all accumulated events
+          // Return member with all accumulated events and navigation_events
           return {
             ...member,
-            all_accumulated_events: allEvents
+            all_accumulated_events: allEvents,
+            navigation_events: allEvents // Use accumulated events
           };
         }) || [];
         
@@ -392,19 +391,20 @@ export default function LiveSessionView({ session, user, onBack }) {
   const members = liveData?.members || [];
   const summary = liveData?.summary || {};
 
-  // Aggregate all unique pages from all members
+  // Aggregate all PAGE_LOADED events from all members
+  // Each event is already unique by URL from the backend
   const allUniquePages = useMemo(() => {
     const pageMap = new Map();
     
     members.forEach(member => {
-      const allEvents = member.all_accumulated_events || 
-                        member.navigation_tracking?.navigation_events || 
-                        member.recent_events || 
-                        [];
+      // Use navigation_events which now only contains PAGE_LOADED events (unique by URL)
+      const pageLoadedEvents = member.navigation_events || 
+                               member.all_accumulated_events || 
+                               [];
       
-      allEvents.forEach(event => {
+      pageLoadedEvents.forEach(event => {
         const url = event.context?.url || event.context?.full_url;
-        if (url) {
+        if (url && event.event_type === 'PAGE_LOADED') {
           if (!pageMap.has(url)) {
             let domain = event.context?.domain;
             if (!domain) {
@@ -676,7 +676,7 @@ export default function LiveSessionView({ session, user, onBack }) {
                     className="text-sm font-semibold"
                     style={{ color: 'var(--color-text-primary)' }}
                   >
-                    Visited Pages
+                    Visited Pages by team!
                   </h2>
                   <span 
                     className="text-xs px-2 py-0.5 rounded-full"
@@ -743,27 +743,28 @@ export default function LiveSessionView({ session, user, onBack }) {
                             {page.url}
                             <ExternalLink size={10} />
                           </a>
-                          <div className="flex items-center gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap mt-1">
+                            {page.visitedBy && page.visitedBy.length > 0 && (
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <User size={12} style={{ color: 'var(--color-text-tertiary)' }} />
+                                <span 
+                                  className="text-xs font-medium"
+                                  style={{ color: 'var(--color-text-secondary)' }}
+                                >
+                                  {page.visitedBy.length === 1 
+                                    ? page.visitedBy[0]
+                                    : `${page.visitedBy.join(', ')}`
+                                  }
+                                </span>
+                              </div>
+                            )}
+                            <span style={{ color: 'var(--color-text-tertiary)' }}>•</span>
                             <span 
                               className="text-xs"
                               style={{ color: 'var(--color-text-tertiary)' }}
                             >
                               {formatTime(page.lastSeen)}
                             </span>
-                            {page.visitedBy && page.visitedBy.length > 0 && (
-                              <>
-                                <span style={{ color: 'var(--color-text-tertiary)' }}>•</span>
-                                <span 
-                                  className="text-xs"
-                                  style={{ color: 'var(--color-text-secondary)' }}
-                                >
-                                  {page.visitedBy.length === 1 
-                                    ? `by ${page.visitedBy[0]}`
-                                    : `by ${page.visitedBy.length} members`
-                                  }
-                                </span>
-                              </>
-                            )}
                           </div>
                         </div>
                       </div>

@@ -826,15 +826,31 @@ const getLiveUpdate = async (req, res) => {
         }
 
         // Combine all navigation_events from all tracking documents for this user
-        const allEvents = [];
+        // Filter only PAGE_LOADED events and keep only the most recent event per unique URL
+        const urlEventMap = new Map(); // Map<url, mostRecentEvent>
+        
         allTrackingForUser.forEach(tracking => {
           if (tracking.navigation_events && tracking.navigation_events.length > 0) {
-            allEvents.push(...tracking.navigation_events);
+            tracking.navigation_events.forEach(event => {
+              // Only include PAGE_LOADED events
+              if (event.event_type === 'PAGE_LOADED') {
+                const url = event.context?.url || event.context?.full_url || '';
+                if (url) {
+                  const existingEvent = urlEventMap.get(url);
+                  // Keep the most recent event for each URL
+                  if (!existingEvent || new Date(event.timestamp) > new Date(existingEvent.timestamp)) {
+                    urlEventMap.set(url, event);
+                  }
+                }
+              }
+            });
           }
         });
 
-        // Sort all events by timestamp
-        allEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        // Convert map to array and sort by timestamp
+        const allEvents = Array.from(urlEventMap.values()).sort(
+          (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+        );
 
         // Get the most recent active tracking document to determine current recording status
         const activeTracking = allTrackingForUser
@@ -856,10 +872,8 @@ const getLiveUpdate = async (req, res) => {
 
         const lastEvent = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
 
-        // Get current browser state from recent events
-        const currentTab = [...allEvents]
-          .reverse()
-          .find(e => ['TAB_ACTIVATED', 'PAGE_OPEN', 'PAGE_URL_CHANGE', 'TAB_UPDATED', 'PAGE_LOADED'].includes(e.event_type));
+        // Get current browser state from the most recent PAGE_LOADED event
+        const currentTab = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
 
         // Filter events based on 'since' parameter
         let recentEvents = [];
@@ -887,15 +901,16 @@ const getLiveUpdate = async (req, res) => {
           event_count: allEvents.length,
           has_new_updates: hasNewUpdates,
           current_state: currentTab ? {
-            url: currentTab.context?.url || null,
+            url: currentTab.context?.url || currentTab.context?.full_url || null,
             title: currentTab.context?.title || null,
-            favicon: currentTab.context?.favIconUrl || null,
-            tab_id: currentTab.context?.tabId || null,
-            window_id: currentTab.context?.windowId || null,
-            last_event_type: lastEvent?.event_type || null,
-            last_event_time: lastEvent?.timestamp || null
+            favicon: currentTab.context?.favicon || currentTab.context?.favIconUrl || null,
+            tab_id: currentTab.context?.tab_id || currentTab.context?.tabId || null,
+            window_id: currentTab.context?.window_id || currentTab.context?.windowId || null,
+            last_event_type: currentTab.event_type || null,
+            last_event_time: currentTab.timestamp || null
           } : null,
-          recent_events: recentEvents
+          recent_events: recentEvents,
+          navigation_events: allEvents // Include all PAGE_LOADED events
         };
       });
 
