@@ -12,79 +12,164 @@
     }
 
     body {
-      width: 350px;
-      padding: 20px;
+      width: 380px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: #333;
+      background: #1C1C1E;
+      color: #E5E5EA;
+      overflow: hidden;
+      min-height: 450px;
     }
 
     .container {
-      background: white;
-      border-radius: 12px;
-      padding: 20px;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      background: #1C1C1E;
+      padding: 0;
+      box-shadow: none;
     }
 
     h1 {
-      font-size: 20px;
-      margin-bottom: 20px;
-      color: #667eea;
-      text-align: center;
+      font-size: 15px;
+      padding: 16px 20px;
+      margin: 0;
+      color: #D1D1D6;
+      text-align: left;
       font-weight: 600;
+      letter-spacing: -0.02em;
+      border-bottom: 1px solid #2C2C2E;
+      background: #161618;
+    }
+
+    .section {
+      padding: 16px 20px;
+      border-bottom: 1px solid #2C2C2E;
+    }
+
+    .section:last-child {
+      border-bottom: none;
+      background: #161618;
+      padding: 12px 20px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #8E8E93;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
     }
 
     .form-group {
-      margin-bottom: 15px;
+      margin-bottom: 12px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
     }
 
     label {
       display: block;
-      margin-bottom: 5px;
-      font-size: 13px;
+      margin-bottom: 6px;
+      font-size: 12px;
       font-weight: 500;
-      color: #555;
+      color: #8E8E93;
+      letter-spacing: -0.01em;
     }
 
     input {
       width: 100%;
-      padding: 10px;
-      border: 2px solid #e0e0e0;
+      padding: 9px 12px;
+      border: 1px solid #3A3A3C;
       border-radius: 6px;
-      font-size: 14px;
-      transition: border-color 0.3s;
+      font-size: 13px;
+      background: #2C2C2E;
+      color: #E5E5EA;
+      transition: all 0.15s ease;
+      font-weight: 400;
+    }
+
+    input:hover {
+      border-color: #48484A;
+      background: #2C2C2E;
     }
 
     input:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: #636366;
+      background: #2C2C2E;
+      box-shadow: none;
+    }
+
+    input::placeholder {
+      color: #636366;
+      font-weight: 400;
     }
 
     .status {
-      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 10px;
+      margin-bottom: 0;
+      padding: 10px 14px;
+      background: #2C2C2E;
       border-radius: 6px;
-      margin-bottom: 15px;
-      text-align: center;
+      border: 1px solid #3A3A3C;
+    }
+
+    .status-label {
+      font-size: 11px;
       font-weight: 600;
-      font-size: 14px;
+      color: #8E8E93;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
     }
 
-    .status.recording {
-      background: #d4edda;
-      color: #155724;
-      border: 2px solid #c3e6cb;
+    .status-icon {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
     }
 
-    .status.stopped {
-      background: #f8d7da;
-      color: #721c24;
-      border: 2px solid #f5c6cb;
+    .status-icon.recording {
+      background: #52C17C;
+      animation: pulse 2s ease-in-out infinite;
     }
 
-    .status.idle {
-      background: #fff3cd;
-      color: #856404;
-      border: 2px solid #ffeaa7;
+    .status-icon.stopped {
+      background: #D17C7C;
+    }
+
+    .status-icon.idle {
+      background: #636366;
+    }
+
+    .status-text {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+    }
+
+    .status.recording .status-text {
+      color: #7DD89F;
+    }
+
+    .status.stopped .status-text {
+      color: #E39999;
+    }
+
+    .status.idle .status-text {
+      color: #8E8E93;
+    }
+
+    @keyframes pulse {
+      0%, 100% { 
+        opacity: 1; 
+      }
+      50% { 
+        opacity: 0.4;
+      }
     }
 
     .status.validating {
@@ -136,64 +221,66 @@
 
     .button-group {
       display: flex;
-      gap: 10px;
-      margin-top: 15px;
+      gap: 8px;
+      margin-top: 0;
     }
 
     button {
       flex: 1;
-      padding: 12px;
-      border: none;
+      padding: 9px 14px;
       border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
-      transition: all 0.3s;
+      transition: all 0.15s ease;
+      letter-spacing: -0.01em;
+      border: 1px solid;
     }
 
-    button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    button:hover:not(:disabled) {
+      transform: none;
+      box-shadow: none;
     }
 
-    button:active {
-      transform: translateY(0);
+    button:active:not(:disabled) {
+      transform: none;
+      box-shadow: none;
     }
 
     button:disabled {
-      opacity: 0.5;
+      opacity: 0.3;
       cursor: not-allowed;
-      transform: none;
     }
 
     .btn-start {
-      background: #28a745;
-      color: white;
+      background: #5B6B9E;
+      color: #E5E5EA;
+      border-color: #4A5887;
     }
 
     .btn-start:hover:not(:disabled) {
-      background: #218838;
+      background: #6575A8;
+      border-color: #5B6B9E;
     }
 
     .btn-stop {
-      background: #dc3545;
-      color: white;
+      background: #2C2C2E;
+      color: #8E8E93;
+      border-color: #3A3A3C;
     }
 
     .btn-stop:hover:not(:disabled) {
-      background: #c82333;
+      background: #3A3A3C;
+      border-color: #48484A;
+      color: #AEAEB2;
     }
 
-    .btn-export {
-      background: #667eea;
-      color: white;
-      width: 100%;
-      margin-top: 10px;
+    .btn-stop:disabled {
+      background: #2C2C2E;
+      color: #48484A;
+      border-color: #3A3A3C;
     }
 
-    .btn-export:hover:not(:disabled) {
-      background: #5568d3;
-    }
 
     .info {
       font-size: 11px;
@@ -203,53 +290,64 @@
       line-height: 1.4;
     }
 
-    .event-count {
-      text-align: center;
-      margin-top: 10px;
-      font-size: 13px;
-      color: #667eea;
-      font-weight: 600;
-    }
 
     .auto-save-info {
-      background: #e8f5e9;
-      border: 1px solid #a5d6a7;
+      background: #2C2C2E;
+      border: 1px solid #3A3A3C;
       border-radius: 6px;
-      padding: 10px;
+      padding: 10px 12px;
       margin-top: 10px;
       font-size: 11px;
-      color: #2e7d32;
-      text-align: center;
+      color: #94C9B8;
       line-height: 1.5;
     }
 
-    .auto-save-info code {
-      background: #fff;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-family: 'Courier New', monospace;
-      font-size: 10px;
-      color: #1b5e20;
+    .auto-save-info strong {
       display: block;
-      margin-top: 5px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #94C9B8;
+    }
+
+    .auto-save-info code {
+      background: #3A3A3C;
+      padding: 5px 8px;
+      border-radius: 4px;
+      font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+      font-size: 10px;
+      color: #AEAEB2;
+      display: block;
+      margin-top: 0;
       word-break: break-all;
+      font-weight: 500;
+      border: 1px solid #48484A;
     }
 
     .hidden {
       display: none;
     }
+
+    .info {
+      font-size: 11px;
+      color: #6B7280;
+      text-align: center;
+      margin-top: 0;
+      line-height: 1.4;
+      letter-spacing: 0;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>🧭 Navigation Tracker</h1>
+    <h1>Navigation Tracker</h1>
     
-    <div id="statusDisplay" class="status idle">
-      Recording: OFF
-    </div>
-
-    <div id="eventCount" class="event-count hidden">
-      Events captured: <span id="countNumber">0</span>
+    <!-- Status Section -->
+    <div class="section">
+      <div class="status-label">Status</div>
+      <div id="statusDisplay" class="status idle">
+        <div class="status-icon idle"></div>
+        <div class="status-text">Idle</div>
+      </div>
     </div>
 
     <div id="autoSaveInfo" class="auto-save-info hidden">
@@ -266,26 +364,39 @@
     </div>
 
     <div id="inputSection">
+    <!-- Configuration Section -->
+    <div class="section" id="inputSection">
+      <div class="section-title">Configuration</div>
       <div class="form-group">
-        <label for="userCode">User Code (number)</label>
+        <label for="userCode">User Code</label>
         <input type="number" id="userCode" placeholder="e.g., 1001" required>
       </div>
 
       <div class="form-group">
-        <label for="sessionCode">Session Code (string)</label>
+        <label for="sessionCode">Session Code</label>
         <input type="text" id="sessionCode" placeholder="e.g., ABC123" required>
       </div>
     </div>
 
-    <div class="button-group">
-      <button id="startBtn" class="btn-start">Start Recording</button>
-      <button id="stopBtn" class="btn-stop" disabled>Stop Recording</button>
+    <!-- Actions Section -->
+    <div class="section">
+      <div class="section-title">Actions</div>
+      <div class="button-group">
+        <button id="startBtn" class="btn-start">Start</button>
+        <button id="stopBtn" class="btn-stop" disabled>Stop</button>
+      </div>
+
+      <div id="autoSaveInfo" class="auto-save-info hidden">
+        <strong>Auto-sync enabled</strong>
+        <code id="filename">Backend/tracking-data/folder/</code>
+      </div>
     </div>
 
-    <button id="exportBtn" class="btn-export hidden">Export JSON</button>
-
-    <div class="info">
-      Enter your codes and click Start to begin tracking. Data auto-saves every 2 seconds to Backend folder. Make sure backend is running!
+    <!-- Footer -->
+    <div class="section">
+      <div class="info">
+        Data syncs automatically every 2 seconds while recording
+      </div>
     </div>
   </div>
 
