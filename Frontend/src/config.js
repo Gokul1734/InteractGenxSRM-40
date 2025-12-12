@@ -21,6 +21,10 @@ const config = {
     return `${this.API_BASE_URL}/sessions`;
   },
   
+  get API_INVITATIONS() {
+    return `${this.API_BASE_URL}/invitations`;
+  },
+  
   // Helper to check if we're in production
   isProduction() {
     return this.ENVIRONMENT === 'production';

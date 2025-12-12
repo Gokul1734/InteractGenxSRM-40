@@ -13,7 +13,8 @@ const {
   endSession,
   validateSessionCode,
   getFullSessionData,
-  getLiveUpdate
+  getLiveUpdate,
+  fixCreatorMembers
 } = require('../controllers/sessionController');
 const {
   sendInvitation,
@@ -31,6 +32,10 @@ router.get('/', getAllSessions);
 // @route   GET /api/sessions/validate/:session_code
 // @desc    Validate if session code exists
 router.get('/validate/:session_code', validateSessionCode);
+
+// @route   POST /api/sessions/fix-creator-members
+// @desc    Fix existing sessions - add creator to members if missing
+router.post('/fix-creator-members', fixCreatorMembers);
 
 // @route   GET /api/sessions/id/:id
 // @desc    Get session by MongoDB ID

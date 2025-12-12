@@ -299,20 +299,20 @@ const acceptInvitation = async (req, res) => {
     invitation.responded_at = new Date();
     await invitation.save();
 
-    // Add user to session members
-    await session.addMember(invitedUser);
+    // Add user to session members (returns updated session)
+    const updatedSession = await session.addMember(invitedUser);
 
     res.status(200).json({
       success: true,
       message: 'Invitation accepted successfully. You have been added to the session.',
       data: {
         invitation_id: invitation._id,
-        session_code: session.session_code,
-        session_name: session.session_name,
+        session_code: updatedSession.session_code,
+        session_name: updatedSession.session_name,
         user_code: invitedUser.user_code,
         user_name: invitedUser.user_name,
         joined_at: new Date(),
-        member_count: session.members.filter(m => m.is_active).length
+        member_count: updatedSession.members.filter(m => m.is_active).length
       }
     });
 
