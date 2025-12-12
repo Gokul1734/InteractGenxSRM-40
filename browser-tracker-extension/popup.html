@@ -172,6 +172,53 @@
       }
     }
 
+    .status.validating {
+      background: #e3f2fd;
+      color: #1565c0;
+      border: 2px solid #90caf9;
+    }
+
+    .validation-error {
+      background: #ffebee;
+      border: 2px solid #ef9a9a;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 15px;
+      text-align: center;
+    }
+
+    .validation-error .error-message {
+      color: #c62828;
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: 10px;
+      line-height: 1.4;
+    }
+
+    .validation-error .dashboard-btn {
+      display: inline-block;
+      background: #667eea;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 4px;
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.3s;
+      cursor: pointer;
+      border: none;
+    }
+
+    .validation-error .dashboard-btn:hover {
+      background: #5568d3;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+    }
+
+    .validation-error .dashboard-icon {
+      margin-right: 5px;
+    }
+
     .button-group {
       display: flex;
       gap: 8px;
@@ -303,6 +350,20 @@
       </div>
     </div>
 
+    <div id="autoSaveInfo" class="auto-save-info hidden">
+      📁 Auto-saving to Backend: <code id="filename">Backend/tracking-data/folder/</code>
+    </div>
+
+    <div id="validationError" class="validation-error hidden">
+      <div id="errorMessage" class="error-message">
+        User code or session code not found.
+      </div>
+      <button id="dashboardLink" class="dashboard-btn" type="button">
+        <span class="dashboard-icon">🌐</span>Go to Dashboard
+      </button>
+    </div>
+
+    <div id="inputSection">
     <!-- Configuration Section -->
     <div class="section" id="inputSection">
       <div class="section-title">Configuration</div>

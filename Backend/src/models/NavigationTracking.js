@@ -44,9 +44,10 @@ const NavigationEventSchema = new mongoose.Schema({
 // Main schema for tracking sessions
 const NavigationTrackingSchema = new mongoose.Schema({
   user_code: {
-    type: Number,
+    type: String,
     required: true,
-    index: true
+    index: true,
+    uppercase: true
   },
   session_code: {
     type: String,
@@ -114,15 +115,17 @@ NavigationTrackingSchema.methods.endRecording = function() {
 
 // Static method to find or create session
 NavigationTrackingSchema.statics.findOrCreateSession = async function(userCode, sessionCode, userId = null, sessionId = null) {
+  const normalizedUserCode = typeof userCode === 'string' ? userCode.toUpperCase() : userCode;
+  
   let tracking = await this.findOne({
-    user_code: userCode,
+    user_code: normalizedUserCode,
     session_code: sessionCode,
     is_active: true
   });
 
   if (!tracking) {
     tracking = await this.create({
-      user_code: userCode,
+      user_code: normalizedUserCode,
       session_code: sessionCode,
       user: userId,
       session: sessionId,

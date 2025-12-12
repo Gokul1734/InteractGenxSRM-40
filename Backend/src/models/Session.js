@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-// Schema for session members (embedded user info with join time)
+// Schema for session members (embedded user info with join time and navigation tracking)
 const SessionMemberSchema = new mongoose.Schema({
   user: {
     type: mongoose.Schema.Types.ObjectId,
@@ -8,12 +8,18 @@ const SessionMemberSchema = new mongoose.Schema({
     required: true
   },
   user_code: {
-    type: Number,
-    required: true
+    type: String,
+    required: true,
+    uppercase: true
   },
   user_name: {
     type: String,
     required: true
+  },
+  navigation_tracking: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'NavigationTracking',
+    default: null
   },
   joined_at: {
     type: Date,
@@ -42,10 +48,16 @@ const SessionSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  session_description: {
+    type: String,
+    required: [true, 'Session description is required'],
+    trim: true
+  },
   members: [SessionMemberSchema],
   created_by: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'User',
+    required: [true, 'Session must have a creator. Only existing users can create sessions.']
   },
   is_active: {
     type: Boolean,
@@ -74,7 +86,7 @@ SessionSchema.virtual('member_count').get(function() {
 });
 
 // Method to add a member to session
-SessionSchema.methods.addMember = async function(user) {
+SessionSchema.methods.addMember = async function(user, navigationTrackingId = null) {
   // Check if user is already a member
   const existingMember = this.members.find(m => m.user_code === user.user_code);
   
@@ -82,17 +94,34 @@ SessionSchema.methods.addMember = async function(user) {
     // Reactivate if previously left
     existingMember.is_active = true;
     existingMember.left_at = null;
+    // Update navigation tracking reference if provided
+    if (navigationTrackingId) {
+      existingMember.navigation_tracking = navigationTrackingId;
+    }
   } else {
     this.members.push({
       user: user._id,
       user_code: user.user_code,
       user_name: user.user_name,
+      navigation_tracking: navigationTrackingId,
       joined_at: new Date(),
       is_active: true
     });
   }
   
   return this.save();
+};
+
+// Method to update member's navigation tracking reference
+SessionSchema.methods.updateMemberTracking = async function(userCode, navigationTrackingId) {
+  const member = this.members.find(m => m.user_code === userCode);
+  
+  if (member) {
+    member.navigation_tracking = navigationTrackingId;
+    return this.save();
+  }
+  
+  return null;
 };
 
 // Method to remove a member from session
@@ -123,15 +152,45 @@ SessionSchema.methods.endSession = function() {
   return this.save();
 };
 
-// Static method to find or create session
-SessionSchema.statics.findOrCreateSession = async function(sessionCode, sessionName, creatorUser) {
-  let session = await this.findOne({ session_code: sessionCode });
+/**
+ * Generate a unique session code with format: XXXXXXS (6 random digits + S suffix)
+ */
+SessionSchema.statics.generateSessionCode = async function() {
+  let sessionCode;
+  let isUnique = false;
+  
+  while (!isUnique) {
+    // Generate 6 random digits
+    const randomDigits = Math.floor(100000 + Math.random() * 900000);
+    sessionCode = `${randomDigits}S`;
+    
+    // Check if code already exists
+    const existing = await this.findOne({ session_code: sessionCode });
+    if (!existing) {
+      isUnique = true;
+    }
+  }
+  
+  return sessionCode;
+};
+
+// Static method to find or create session (requires creator user for new sessions)
+SessionSchema.statics.findOrCreateSession = async function(sessionCode, sessionName, sessionDescription, creatorUser) {
+  // Generate session code if not provided
+  const code = sessionCode || await this.generateSessionCode();
+  let session = await this.findOne({ session_code: code });
   
   if (!session) {
+    // Creator user is required for new sessions
+    if (!creatorUser || !creatorUser._id) {
+      throw new Error('Creator user is required to create a new session');
+    }
+    
     session = await this.create({
-      session_code: sessionCode,
-      session_name: sessionName || `Session ${sessionCode}`,
-      created_by: creatorUser ? creatorUser._id : null,
+      session_code: code,
+      session_name: sessionName || `Session ${code}`,
+      session_description: sessionDescription || `Tracking session ${code}`,
+      created_by: creatorUser._id,
       members: [],
       is_active: true
     });
@@ -199,10 +258,11 @@ SessionSchema.statics.getCollaborativeData = async function(sessionCode) {
   };
 };
 
-// Static method to get session with populated members
+// Static method to get session with populated members and their navigation tracking
 SessionSchema.statics.getSessionWithMembers = function(sessionCode) {
   return this.findOne({ session_code: sessionCode })
     .populate('members.user')
+    .populate('members.navigation_tracking')
     .populate('created_by');
 };
 
