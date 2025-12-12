@@ -147,19 +147,19 @@ function openDashboard() {
 
 // Start Recording
 startBtn.addEventListener('click', async () => {
-  const userCode = parseInt(userCodeInput.value);
-  const sessionCode = sessionCodeInput.value.trim();
+  const userCode = userCodeInput.value.trim().toUpperCase();
+  const sessionCode = sessionCodeInput.value.trim().toUpperCase();
 
   // Hide any previous error
   hideValidationError();
 
   // Basic format validation
-  if (!userCode || isNaN(userCode)) {
-    showValidationError('Please enter a valid numeric User Code');
+  if (!userCode || userCode === '') {
+    showValidationError('Please enter a valid User Code');
     return;
   }
 
-  if (!sessionCode) {
+  if (!sessionCode || sessionCode === '') {
     showValidationError('Please enter a Session Code');
     return;
   }

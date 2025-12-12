@@ -51,14 +51,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ============================================================================
 
 async function startRecording(userCode, sessionCode) {
-  console.log(`Starting recording for user ${userCode}, session ${sessionCode}`);
+  // Ensure user_code and session_code are strings
+  const normalizedUserCode = String(userCode).toUpperCase();
+  const normalizedSessionCode = String(sessionCode);
+  
+  console.log(`Starting recording for user ${normalizedUserCode}, session ${normalizedSessionCode}`);
   
   isRecording = true;
   
   // Initialize new recording data structure
   recordingData = {
-    user_code: userCode,
-    session_code: sessionCode,
+    user_code: normalizedUserCode,
+    session_code: normalizedSessionCode,
     recording_started_at: new Date().toISOString(),
     recording_ended_at: null,
     navigation_events: []
@@ -70,8 +74,8 @@ async function startRecording(userCode, sessionCode) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_code: userCode,
-        session_code: sessionCode
+        user_code: normalizedUserCode,
+        session_code: normalizedSessionCode
       })
     });
     

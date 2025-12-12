@@ -115,18 +115,20 @@ NavigationTrackingSchema.methods.endRecording = function() {
 
 // Static method to find or create session
 NavigationTrackingSchema.statics.findOrCreateSession = async function(userCode, sessionCode, userId = null, sessionId = null) {
-  const normalizedUserCode = typeof userCode === 'string' ? userCode.toUpperCase() : userCode;
+  // Ensure user_code and session_code are strings
+  const normalizedUserCode = String(userCode).toUpperCase();
+  const normalizedSessionCode = String(sessionCode);
   
   let tracking = await this.findOne({
     user_code: normalizedUserCode,
-    session_code: sessionCode,
+    session_code: normalizedSessionCode,
     is_active: true
   });
 
   if (!tracking) {
     tracking = await this.create({
       user_code: normalizedUserCode,
-      session_code: sessionCode,
+      session_code: normalizedSessionCode,
       user: userId,
       session: sessionId,
       recording_started_at: new Date(),
