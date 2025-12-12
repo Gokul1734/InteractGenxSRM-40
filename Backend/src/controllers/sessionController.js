@@ -607,6 +607,165 @@ const getFullSessionData = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get live navigation tracking updates for all session members
+ * @route   GET /api/sessions/:session_code/getLiveUpdate
+ * @access  Public
+ * @query   since - Optional ISO timestamp to get only events after this time
+ */
+const getLiveUpdate = async (req, res) => {
+  try {
+    const { session_code } = req.params;
+    const { since } = req.query; // Optional: get only updates after this timestamp
+
+    // Get session with members (using lean() for faster query)
+    const session = await Session.findOne({ session_code })
+      .populate('created_by', 'user_name user_code user_email')
+      .lean();
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
+    }
+
+    // Get all member user_codes from the session
+    const memberUserCodes = session.members
+      .filter(m => m.is_active)
+      .map(m => m.user_code);
+
+    if (memberUserCodes.length === 0) {
+      return res.status(200).json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        session: {
+          session_code: session.session_code,
+          session_name: session.session_name,
+          session_description: session.session_description,
+          is_active: session.is_active,
+          started_at: session.started_at,
+          created_by: session.created_by
+        },
+        member_count: 0,
+        active_recording_count: 0,
+        members: []
+      });
+    }
+
+    // Fetch navigation tracking for all active members in this session
+    const trackingData = await NavigationTracking.find({
+      session_code: session_code,
+      user_code: { $in: memberUserCodes }
+    })
+      .select('user_code is_active event_count navigation_events recording_started_at recording_ended_at updatedAt')
+      .lean();
+
+    // Build response with live status for each member
+    const currentTime = new Date();
+    const sinceTime = since ? new Date(since) : null;
+
+    const membersLiveData = session.members
+      .filter(m => m.is_active)
+      .map(member => {
+        // Find tracking data for this member
+        const tracking = trackingData.find(t => t.user_code === member.user_code);
+
+        if (!tracking) {
+          return {
+            user_code: member.user_code,
+            user_name: member.user_name,
+            joined_at: member.joined_at,
+            is_recording: false,
+            has_tracking: false,
+            current_state: null,
+            event_count: 0,
+            recent_events: [],
+            has_new_updates: false
+          };
+        }
+
+        const events = tracking.navigation_events || [];
+        const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+
+        // Get current browser state from recent events
+        const currentTab = [...events]
+          .reverse()
+          .find(e => ['TAB_ACTIVATED', 'PAGE_OPEN', 'PAGE_URL_CHANGE', 'TAB_UPDATED', 'PAGE_LOADED'].includes(e.event_type));
+
+        // Filter events based on 'since' parameter
+        let recentEvents = [];
+        let hasNewUpdates = false;
+
+        if (sinceTime) {
+          // Return only events after the 'since' timestamp
+          recentEvents = events.filter(e => new Date(e.timestamp) > sinceTime);
+          hasNewUpdates = recentEvents.length > 0;
+        } else {
+          // Return last 10 events if no 'since' parameter
+          recentEvents = events.slice(-10);
+          hasNewUpdates = events.length > 0;
+        }
+
+        return {
+          user_code: member.user_code,
+          user_name: member.user_name,
+          joined_at: member.joined_at,
+          is_recording: tracking.is_active,
+          has_tracking: true,
+          recording_started_at: tracking.recording_started_at,
+          recording_ended_at: tracking.recording_ended_at,
+          last_updated: tracking.updatedAt,
+          event_count: tracking.event_count || events.length,
+          has_new_updates: hasNewUpdates,
+          current_state: currentTab ? {
+            url: currentTab.context?.url || null,
+            title: currentTab.context?.title || null,
+            favicon: currentTab.context?.favIconUrl || null,
+            tab_id: currentTab.context?.tabId || null,
+            window_id: currentTab.context?.windowId || null,
+            last_event_type: lastEvent?.event_type || null,
+            last_event_time: lastEvent?.timestamp || null
+          } : null,
+          recent_events: recentEvents
+        };
+      });
+
+    // Calculate summary stats
+    const activeRecordingCount = membersLiveData.filter(m => m.is_recording).length;
+    const totalEvents = membersLiveData.reduce((sum, m) => sum + m.event_count, 0);
+
+    res.status(200).json({
+      success: true,
+      timestamp: currentTime.toISOString(),
+      session: {
+        session_code: session.session_code,
+        session_name: session.session_name,
+        session_description: session.session_description,
+        is_active: session.is_active,
+        started_at: session.started_at,
+        ended_at: session.ended_at,
+        created_by: session.created_by
+      },
+      summary: {
+        member_count: membersLiveData.length,
+        active_recording_count: activeRecordingCount,
+        total_events: totalEvents,
+        has_any_updates: sinceTime ? membersLiveData.some(m => m.has_new_updates) : true
+      },
+      members: membersLiveData
+    });
+
+  } catch (error) {
+    console.error('Error fetching live update:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   createSession,
   getAllSessions,
@@ -619,6 +778,7 @@ module.exports = {
   getSessionMembers,
   endSession,
   validateSessionCode,
-  getFullSessionData
+  getFullSessionData,
+  getLiveUpdate
 };
 

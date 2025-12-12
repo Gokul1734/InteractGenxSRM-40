@@ -12,7 +12,8 @@ const {
   getSessionMembers,
   endSession,
   validateSessionCode,
-  getFullSessionData
+  getFullSessionData,
+  getLiveUpdate
 } = require('../controllers/sessionController');
 const {
   sendInvitation,
@@ -66,6 +67,10 @@ router.post('/:session_code/end', endSession);
 // @route   GET /api/sessions/:session_code/full
 // @desc    Get full session data with all navigation tracking
 router.get('/:session_code/full', getFullSessionData);
+
+// @route   GET /api/sessions/:session_code/getLiveUpdate
+// @desc    Get live navigation tracking updates for all session members (optimized for polling)
+router.get('/:session_code/getLiveUpdate', getLiveUpdate);
 
 // @route   POST /api/sessions/:session_code/invitations
 // @desc    Send invitation to join a session (only session creator)
