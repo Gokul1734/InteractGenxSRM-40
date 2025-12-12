@@ -113,29 +113,38 @@ NavigationTrackingSchema.methods.endRecording = function() {
   return this.save();
 };
 
-// Static method to find or create session
+// Static method to find or create session - uses atomic findOneAndUpdate for concurrency safety
 NavigationTrackingSchema.statics.findOrCreateSession = async function(userCode, sessionCode, userId = null, sessionId = null) {
   // Ensure user_code and session_code are strings
   const normalizedUserCode = String(userCode).toUpperCase();
   const normalizedSessionCode = String(sessionCode);
   
-  let tracking = await this.findOne({
-    user_code: normalizedUserCode,
-    session_code: normalizedSessionCode,
-    is_active: true
-  });
-
-  if (!tracking) {
-    tracking = await this.create({
+  // Use findOneAndUpdate with upsert to atomically find or create
+  // This prevents race conditions when multiple requests come in simultaneously
+  const tracking = await this.findOneAndUpdate(
+    {
       user_code: normalizedUserCode,
       session_code: normalizedSessionCode,
-      user: userId,
-      session: sessionId,
-      recording_started_at: new Date(),
-      navigation_events: [],
       is_active: true
-    });
-  }
+    },
+    {
+      $setOnInsert: {
+        user_code: normalizedUserCode,
+        session_code: normalizedSessionCode,
+        user: userId,
+        session: sessionId,
+        recording_started_at: new Date(),
+        navigation_events: [],
+        is_active: true,
+        event_count: 0
+      }
+    },
+    { 
+      new: true, 
+      upsert: true,
+      setDefaultsOnInsert: true
+    }
+  );
 
   return tracking;
 };

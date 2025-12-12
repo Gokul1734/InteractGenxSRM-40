@@ -112,55 +112,80 @@ router.post('/update', async (req, res) => {
       });
     }
 
-    // Find or create tracking record
-    let tracking = await NavigationTracking.findOne({
-      user_code: normalizedUserCode,
-      session_code: normalizedSessionCode,
-      is_active: true
-    });
+    // Prepare update data
+    const navigationEvents = data.navigation_events || [];
+    const eventCount = navigationEvents.length;
+    const updateData = {
+      navigation_events: navigationEvents,
+      event_count: eventCount
+    };
+    
+    if (data.recording_ended_at) {
+      updateData.recording_ended_at = data.recording_ended_at;
+    }
 
-    let isNewTracking = false;
-    if (!tracking) {
-      // Find user and session for linking
-      const user = await User.findOne({ user_code: normalizedUserCode });
-      const session = await Session.findOne({ session_code: normalizedSessionCode });
-
-      // Create new tracking if doesn't exist
-      tracking = await NavigationTracking.create({
+    // Use atomic findOneAndUpdate with upsert for concurrency safety
+    // This prevents race conditions when multiple users are updating simultaneously
+    const tracking = await NavigationTracking.findOneAndUpdate(
+      {
         user_code: normalizedUserCode,
         session_code: normalizedSessionCode,
-        user: user?._id || null,
-        session: session?._id || null,
-        recording_started_at: data.recording_started_at || new Date(),
-        navigation_events: [],
         is_active: true
-      });
-      isNewTracking = true;
+      },
+      {
+        $set: updateData,
+        $setOnInsert: {
+          user_code: normalizedUserCode,
+          session_code: normalizedSessionCode,
+          recording_started_at: data.recording_started_at || new Date(),
+          is_active: true
+        }
+      },
+      { 
+        new: true, 
+        upsert: true,
+        setDefaultsOnInsert: true
+      }
+    );
 
-      // Link tracking to session member if both user and session exist
+    // If this was a new tracking document (upserted), link it to the session member
+    // Check if tracking was just created by comparing recording_started_at
+    const wasJustCreated = tracking.navigation_events.length === eventCount && 
+                           eventCount > 0 && 
+                           !tracking.user && !tracking.session;
+    
+    if (wasJustCreated || !tracking.user || !tracking.session) {
+      // Find user and session for linking (only if not already linked)
+      const [user, session] = await Promise.all([
+        !tracking.user ? User.findOne({ user_code: normalizedUserCode }) : null,
+        !tracking.session ? Session.findOne({ session_code: normalizedSessionCode }) : null
+      ]);
+
+      // Update tracking with user and session references if found
+      if (user || session) {
+        const linkUpdate = {};
+        if (user && !tracking.user) linkUpdate.user = user._id;
+        if (session && !tracking.session) linkUpdate.session = session._id;
+        
+        if (Object.keys(linkUpdate).length > 0) {
+          await NavigationTracking.findByIdAndUpdate(tracking._id, { $set: linkUpdate });
+        }
+      }
+
+      // Link tracking to session member using atomic operation
       if (user && session) {
         await session.updateMemberTracking(normalizedUserCode, tracking._id);
       }
     }
 
-    // LIVE UPDATE: Replace navigation events with latest data
-    tracking.navigation_events = data.navigation_events || [];
-    tracking.event_count = tracking.navigation_events.length;
-
-    if (data.recording_ended_at) {
-      tracking.recording_ended_at = data.recording_ended_at;
-    }
-
-    await tracking.save();
-
-    console.log(`✓ LIVE: ${normalizedUserCode}_${normalizedSessionCode} → ${tracking.event_count} events`);
+    console.log(`✓ LIVE: ${normalizedUserCode}_${normalizedSessionCode} → ${eventCount} events`);
 
     res.status(200).json({
       success: true,
       message: 'Data updated live',
       data: {
         folder: `${normalizedUserCode}_${normalizedSessionCode}`,
-        event_count: tracking.event_count,
+        event_count: eventCount,
         updated_at: new Date().toISOString()
       }
     });

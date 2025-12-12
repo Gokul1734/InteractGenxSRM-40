@@ -123,71 +123,151 @@ SessionSchema.virtual('member_count').get(function() {
   return this.members.filter(m => m.is_active).length;
 });
 
-// Method to add a member to session
+// Method to add a member to session - uses atomic operations for concurrency safety
 SessionSchema.methods.addMember = async function(user, navigationTrackingId = null) {
+  const Session = mongoose.model('Session');
+  
   // Check if user is already a member
   const existingMember = this.members.find(m => m.user_code === user.user_code);
   
   if (existingMember) {
-    // Reactivate if previously left
-    existingMember.is_active = true;
-    existingMember.left_at = null;
-    // Update navigation tracking reference if provided
+    // Reactivate existing member using atomic $set operation
+    const updateFields = {
+      'members.$.is_active': true,
+      'members.$.left_at': null
+    };
     if (navigationTrackingId) {
-      existingMember.navigation_tracking = navigationTrackingId;
+      updateFields['members.$.navigation_tracking'] = navigationTrackingId;
     }
+    
+    const updated = await Session.findOneAndUpdate(
+      { _id: this._id, 'members.user_code': user.user_code },
+      { $set: updateFields },
+      { new: true }
+    );
+    
+    // Update local state to reflect changes
+    if (updated) {
+      const memberIndex = this.members.findIndex(m => m.user_code === user.user_code);
+      if (memberIndex !== -1) {
+        this.members[memberIndex].is_active = true;
+        this.members[memberIndex].left_at = null;
+        if (navigationTrackingId) {
+          this.members[memberIndex].navigation_tracking = navigationTrackingId;
+        }
+      }
+    }
+    return updated || this;
   } else {
-    this.members.push({
+    // Add new member using atomic $push operation
+    const newMember = {
       user: user._id,
       user_code: user.user_code,
       user_name: user.user_name,
       navigation_tracking: navigationTrackingId,
       joined_at: new Date(),
       is_active: true
-    });
+    };
+    
+    const updated = await Session.findOneAndUpdate(
+      { _id: this._id },
+      { $push: { members: newMember } },
+      { new: true }
+    );
+    
+    // Update local state to reflect changes
+    if (updated) {
+      this.members.push(newMember);
+    }
+    return updated || this;
   }
-  
-  return this.save();
 };
 
-// Method to update member's navigation tracking reference
+// Method to update member's navigation tracking reference - uses atomic operations for concurrency safety
 SessionSchema.methods.updateMemberTracking = async function(userCode, navigationTrackingId) {
-  const member = this.members.find(m => m.user_code === userCode);
+  const Session = mongoose.model('Session');
   
-  if (member) {
-    member.navigation_tracking = navigationTrackingId;
-    return this.save();
+  // Use atomic $set operation to update only the specific member's tracking reference
+  const updated = await Session.findOneAndUpdate(
+    { _id: this._id, 'members.user_code': userCode.toUpperCase() },
+    { $set: { 'members.$.navigation_tracking': navigationTrackingId } },
+    { new: true }
+  );
+  
+  // Update local state to reflect changes
+  if (updated) {
+    const member = this.members.find(m => m.user_code === userCode.toUpperCase());
+    if (member) {
+      member.navigation_tracking = navigationTrackingId;
+    }
   }
   
-  return null;
+  return updated;
 };
 
-// Method to remove a member from session
+// Method to remove a member from session - uses atomic operations for concurrency safety
 SessionSchema.methods.removeMember = async function(userCode) {
-  const member = this.members.find(m => m.user_code === userCode);
+  const Session = mongoose.model('Session');
   
-  if (member) {
-    member.is_active = false;
-    member.left_at = new Date();
-  }
+  // Use atomic $set operation to mark member as inactive
+  const updated = await Session.findOneAndUpdate(
+    { _id: this._id, 'members.user_code': userCode.toUpperCase() },
+    { 
+      $set: { 
+        'members.$.is_active': false,
+        'members.$.left_at': new Date()
+      } 
+    },
+    { new: true }
+  );
   
-  return this.save();
-};
-
-// Method to end session
-SessionSchema.methods.endSession = function() {
-  this.is_active = false;
-  this.ended_at = new Date();
-  
-  // Mark all members as left
-  this.members.forEach(member => {
-    if (member.is_active) {
+  // Update local state to reflect changes
+  if (updated) {
+    const member = this.members.find(m => m.user_code === userCode.toUpperCase());
+    if (member) {
       member.is_active = false;
       member.left_at = new Date();
     }
-  });
+  }
   
-  return this.save();
+  return updated || this;
+};
+
+// Method to end session - uses atomic operations for concurrency safety
+SessionSchema.methods.endSession = async function() {
+  const Session = mongoose.model('Session');
+  const now = new Date();
+  
+  // Use atomic operation to end session and mark all members as left
+  const updated = await Session.findOneAndUpdate(
+    { _id: this._id },
+    { 
+      $set: { 
+        is_active: false,
+        ended_at: now,
+        'members.$[activeMember].is_active': false,
+        'members.$[activeMember].left_at': now
+      } 
+    },
+    { 
+      new: true,
+      arrayFilters: [{ 'activeMember.is_active': true }]
+    }
+  );
+  
+  // Update local state to reflect changes
+  if (updated) {
+    this.is_active = false;
+    this.ended_at = now;
+    this.members.forEach(member => {
+      if (member.is_active) {
+        member.is_active = false;
+        member.left_at = now;
+      }
+    });
+  }
+  
+  return updated || this;
 };
 
 /**
