@@ -609,6 +609,20 @@ const getFullSessionData = async (req, res) => {
       });
     }
 
+    // Get all user codes from session members
+    const memberUserCodes = session.members.map(m => m.user_code);
+
+    // Fetch ALL navigation tracking documents for all members in this session
+    // This includes all recording sessions (even if stopped and restarted)
+    const NavigationTracking = require('../models/NavigationTracking');
+    const allTrackingData = await NavigationTracking.find({
+      session_code: session_code,
+      user_code: { $in: memberUserCodes }
+    })
+      .select('user_code is_active event_count navigation_events recording_started_at recording_ended_at')
+      .sort({ recording_started_at: 1 })
+      .lean();
+
     // Build comprehensive session response
     const sessionData = {
       session_id: session._id,
@@ -625,7 +639,46 @@ const getFullSessionData = async (req, res) => {
       member_count: session.members.length,
       active_member_count: session.members.filter(m => m.is_active).length,
       members: session.members.map(member => {
-        const tracking = member.navigation_tracking;
+        // Get ALL tracking documents for this member (not just the one referenced)
+        const allTrackingForUser = allTrackingData.filter(t => t.user_code === member.user_code);
+
+        if (!allTrackingForUser || allTrackingForUser.length === 0) {
+          return {
+            user_id: member.user?._id || null,
+            user_code: member.user_code,
+            user_name: member.user_name,
+            is_active: member.is_active,
+            joined_at: member.joined_at,
+            left_at: member.left_at,
+            navigation_tracking: null
+          };
+        }
+
+        // Combine all navigation_events from all tracking documents for this user
+        const allEvents = [];
+        allTrackingForUser.forEach(tracking => {
+          if (tracking.navigation_events && tracking.navigation_events.length > 0) {
+            allEvents.push(...tracking.navigation_events);
+          }
+        });
+
+        // Sort all events by timestamp
+        allEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        // Get the most recent active tracking document to determine current recording status
+        const activeTracking = allTrackingForUser
+          .filter(t => t.is_active)
+          .sort((a, b) => new Date(b.recording_started_at) - new Date(a.recording_started_at))[0];
+
+        // Get the earliest recording start time and latest recording end time
+        const earliestStart = allTrackingForUser
+          .map(t => t.recording_started_at)
+          .sort((a, b) => new Date(a) - new Date(b))[0];
+        const latestEnd = allTrackingForUser
+          .map(t => t.recording_ended_at)
+          .filter(end => end !== null)
+          .sort((a, b) => new Date(b) - new Date(a))[0] || null;
+
         return {
           user_id: member.user?._id || null,
           user_code: member.user_code,
@@ -633,19 +686,22 @@ const getFullSessionData = async (req, res) => {
           is_active: member.is_active,
           joined_at: member.joined_at,
           left_at: member.left_at,
-          navigation_tracking: tracking ? {
-            tracking_id: tracking._id,
-            event_count: tracking.event_count || tracking.navigation_events?.length || 0,
-            is_recording: tracking.is_active,
-            recording_started_at: tracking.recording_started_at,
-            recording_ended_at: tracking.recording_ended_at,
-            navigation_events: tracking.navigation_events || []
-          } : null
+          navigation_tracking: {
+            tracking_id: activeTracking?._id || allTrackingForUser[allTrackingForUser.length - 1]?._id || null,
+            event_count: allEvents.length,
+            is_recording: activeTracking ? activeTracking.is_active : false,
+            recording_started_at: earliestStart,
+            recording_ended_at: latestEnd,
+            navigation_events: allEvents
+          }
         };
       }),
       total_events: session.members.reduce((total, member) => {
-        const tracking = member.navigation_tracking;
-        return total + (tracking?.navigation_events?.length || 0);
+        const allTrackingForUser = allTrackingData.filter(t => t.user_code === member.user_code);
+        const eventCount = allTrackingForUser.reduce((sum, tracking) => {
+          return sum + (tracking.navigation_events?.length || 0);
+        }, 0);
+        return total + eventCount;
       }, 0)
     };
 
@@ -735,12 +791,14 @@ const getLiveUpdate = async (req, res) => {
       });
     }
 
-    // Fetch navigation tracking for all active members in this session
+    // Fetch ALL navigation tracking documents for all active members in this session
+    // This includes all recording sessions (even if stopped and restarted)
     const trackingData = await NavigationTracking.find({
       session_code: session_code,
       user_code: { $in: memberUserCodes }
     })
       .select('user_code is_active event_count navigation_events recording_started_at recording_ended_at updatedAt')
+      .sort({ recording_started_at: 1 }) // Sort by recording start time
       .lean();
 
     // Build response with live status for each member
@@ -750,10 +808,10 @@ const getLiveUpdate = async (req, res) => {
     const membersLiveData = session.members
       .filter(m => m.is_active)
       .map(member => {
-        // Find tracking data for this member
-        const tracking = trackingData.find(t => t.user_code === member.user_code);
+        // Get ALL tracking documents for this member (not just the first one)
+        const allTrackingForUser = trackingData.filter(t => t.user_code === member.user_code);
 
-        if (!tracking) {
+        if (!allTrackingForUser || allTrackingForUser.length === 0) {
           return {
             user_code: member.user_code,
             user_name: member.user_name,
@@ -767,11 +825,39 @@ const getLiveUpdate = async (req, res) => {
           };
         }
 
-        const events = tracking.navigation_events || [];
-        const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+        // Combine all navigation_events from all tracking documents for this user
+        const allEvents = [];
+        allTrackingForUser.forEach(tracking => {
+          if (tracking.navigation_events && tracking.navigation_events.length > 0) {
+            allEvents.push(...tracking.navigation_events);
+          }
+        });
+
+        // Sort all events by timestamp
+        allEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        // Get the most recent active tracking document to determine current recording status
+        const activeTracking = allTrackingForUser
+          .filter(t => t.is_active)
+          .sort((a, b) => new Date(b.recording_started_at) - new Date(a.recording_started_at))[0];
+
+        // Get the most recent tracking document (active or not) for metadata
+        const mostRecentTracking = allTrackingForUser
+          .sort((a, b) => new Date(b.updatedAt || b.recording_started_at) - new Date(a.updatedAt || a.recording_started_at))[0];
+
+        // Get the earliest recording start time and latest recording end time
+        const earliestStart = allTrackingForUser
+          .map(t => t.recording_started_at)
+          .sort((a, b) => new Date(a) - new Date(b))[0];
+        const latestEnd = allTrackingForUser
+          .map(t => t.recording_ended_at)
+          .filter(end => end !== null)
+          .sort((a, b) => new Date(b) - new Date(a))[0] || null;
+
+        const lastEvent = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
 
         // Get current browser state from recent events
-        const currentTab = [...events]
+        const currentTab = [...allEvents]
           .reverse()
           .find(e => ['TAB_ACTIVATED', 'PAGE_OPEN', 'PAGE_URL_CHANGE', 'TAB_UPDATED', 'PAGE_LOADED'].includes(e.event_type));
 
@@ -781,24 +867,24 @@ const getLiveUpdate = async (req, res) => {
 
         if (sinceTime) {
           // Return only events after the 'since' timestamp
-          recentEvents = events.filter(e => new Date(e.timestamp) > sinceTime);
+          recentEvents = allEvents.filter(e => new Date(e.timestamp) > sinceTime);
           hasNewUpdates = recentEvents.length > 0;
         } else {
           // Return last 10 events if no 'since' parameter
-          recentEvents = events.slice(-10);
-          hasNewUpdates = events.length > 0;
+          recentEvents = allEvents.slice(-10);
+          hasNewUpdates = allEvents.length > 0;
         }
 
         return {
           user_code: member.user_code,
           user_name: member.user_name,
           joined_at: member.joined_at,
-          is_recording: tracking.is_active,
+          is_recording: activeTracking ? activeTracking.is_active : false,
           has_tracking: true,
-          recording_started_at: tracking.recording_started_at,
-          recording_ended_at: tracking.recording_ended_at,
-          last_updated: tracking.updatedAt,
-          event_count: tracking.event_count || events.length,
+          recording_started_at: earliestStart,
+          recording_ended_at: latestEnd,
+          last_updated: mostRecentTracking?.updatedAt || mostRecentTracking?.recording_started_at,
+          event_count: allEvents.length,
           has_new_updates: hasNewUpdates,
           current_state: currentTab ? {
             url: currentTab.context?.url || null,
