@@ -1,0 +1,5 @@
+# Ignore all tracking data files
+*
+# But keep this directory
+!.gitignore
+

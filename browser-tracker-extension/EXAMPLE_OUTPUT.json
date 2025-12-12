@@ -1,0 +1,257 @@
+{
+  "user_code": 1001,
+  "session_code": "ABC123",
+  "recording_started_at": "2025-01-12T09:00:00.000Z",
+  "recording_ended_at": "2025-01-12T09:15:30.000Z",
+  "navigation_events": [
+    {
+      "event_type": "RECORDING_STARTED",
+      "timestamp": "2025-01-12T09:00:00.100Z",
+      "context": {}
+    },
+    {
+      "event_type": "WINDOW_FOCUSED",
+      "timestamp": "2025-01-12T09:00:01.000Z",
+      "context": {
+        "window_id": 1
+      }
+    },
+    {
+      "event_type": "TAB_OPEN",
+      "timestamp": "2025-01-12T09:01:10.000Z",
+      "context": {
+        "tab_id": 123,
+        "window_id": 1,
+        "tab_index": 0,
+        "active": true
+      }
+    },
+    {
+      "event_type": "PAGE_OPEN",
+      "timestamp": "2025-01-12T09:01:15.200Z",
+      "context": {
+        "tab_id": 123,
+        "url": "https://www.google.com",
+        "domain": "www.google.com"
+      }
+    },
+    {
+      "event_type": "TAB_UPDATED",
+      "timestamp": "2025-01-12T09:01:16.500Z",
+      "context": {
+        "tab_id": 123,
+        "url": "https://www.google.com",
+        "title": "Google",
+        "status": "complete"
+      }
+    },
+    {
+      "event_type": "PAGE_VISIBLE",
+      "timestamp": "2025-01-12T09:01:16.600Z",
+      "context": {
+        "tab_id": 123,
+        "url": "https://www.google.com",
+        "domain": "www.google.com"
+      }
+    },
+    {
+      "event_type": "PAGE_OPEN",
+      "timestamp": "2025-01-12T09:01:40.000Z",
+      "context": {
+        "tab_id": 123,
+        "url": "https://www.google.com/search?q=chrome+extensions",
+        "domain": "www.google.com"
+      }
+    },
+    {
+      "event_type": "SEARCH",
+      "timestamp": "2025-01-12T09:01:40.100Z",
+      "context": {
+        "tab_id": 123,
+        "engine": "google",
+        "query": "chrome extensions",
+        "full_url": "https://www.google.com/search?q=chrome+extensions"
+      }
+    },
+    {
+      "event_type": "PAGE_URL_CHANGE",
+      "timestamp": "2025-01-12T09:01:40.200Z",
+      "context": {
+        "tab_id": 123,
+        "url": "https://www.google.com/search?q=chrome+extensions",
+        "domain": "www.google.com",
+        "transition_type": "link"
+      }
+    },
+    {
+      "event_type": "TAB_OPEN",
+      "timestamp": "2025-01-12T09:02:30.000Z",
+      "context": {
+        "tab_id": 124,
+        "window_id": 1,
+        "tab_index": 1,
+        "active": false
+      }
+    },
+    {
+      "event_type": "PAGE_HIDDEN",
+      "timestamp": "2025-01-12T09:02:32.000Z",
+      "context": {
+        "tab_id": 123,
+        "url": "https://www.google.com/search?q=chrome+extensions",
+        "domain": "www.google.com"
+      }
+    },
+    {
+      "event_type": "TAB_ACTIVATED",
+      "timestamp": "2025-01-12T09:02:32.100Z",
+      "context": {
+        "tab_id": 124,
+        "window_id": 1
+      }
+    },
+    {
+      "event_type": "PAGE_OPEN",
+      "timestamp": "2025-01-12T09:02:33.000Z",
+      "context": {
+        "tab_id": 124,
+        "url": "https://developer.chrome.com/docs/extensions/",
+        "domain": "developer.chrome.com"
+      }
+    },
+    {
+      "event_type": "PAGE_VISIBLE",
+      "timestamp": "2025-01-12T09:02:33.200Z",
+      "context": {
+        "tab_id": 124,
+        "url": "https://developer.chrome.com/docs/extensions/",
+        "domain": "developer.chrome.com"
+      }
+    },
+    {
+      "event_type": "BACK_NAVIGATION",
+      "timestamp": "2025-01-12T09:03:45.000Z",
+      "context": {
+        "tab_id": 124,
+        "url": "https://www.google.com/search?q=chrome+extensions",
+        "domain": "www.google.com"
+      }
+    },
+    {
+      "event_type": "FORWARD_NAVIGATION",
+      "timestamp": "2025-01-12T09:04:10.000Z",
+      "context": {
+        "tab_id": 124,
+        "url": "https://developer.chrome.com/docs/extensions/",
+        "domain": "developer.chrome.com"
+      }
+    },
+    {
+      "event_type": "PAGE_RELOAD",
+      "timestamp": "2025-01-12T09:05:00.000Z",
+      "context": {
+        "tab_id": 124,
+        "url": "https://developer.chrome.com/docs/extensions/",
+        "domain": "developer.chrome.com"
+      }
+    },
+    {
+      "event_type": "TAB_ACTIVATED",
+      "timestamp": "2025-01-12T09:06:00.000Z",
+      "context": {
+        "tab_id": 123,
+        "window_id": 1
+      }
+    },
+    {
+      "event_type": "PAGE_HIDDEN",
+      "timestamp": "2025-01-12T09:06:00.100Z",
+      "context": {
+        "tab_id": 124,
+        "url": "https://developer.chrome.com/docs/extensions/",
+        "domain": "developer.chrome.com"
+      }
+    },
+    {
+      "event_type": "PAGE_VISIBLE",
+      "timestamp": "2025-01-12T09:06:00.200Z",
+      "context": {
+        "tab_id": 123,
+        "url": "https://www.google.com/search?q=chrome+extensions",
+        "domain": "www.google.com"
+      }
+    },
+    {
+      "event_type": "PAGE_OPEN",
+      "timestamp": "2025-01-12T09:07:20.000Z",
+      "context": {
+        "tab_id": 123,
+        "url": "https://www.bing.com",
+        "domain": "www.bing.com"
+      }
+    },
+    {
+      "event_type": "SEARCH",
+      "timestamp": "2025-01-12T09:08:10.000Z",
+      "context": {
+        "tab_id": 123,
+        "engine": "bing",
+        "query": "browser navigation tracking",
+        "full_url": "https://www.bing.com/search?q=browser+navigation+tracking"
+      }
+    },
+    {
+      "event_type": "WINDOW_CREATED",
+      "timestamp": "2025-01-12T09:10:00.000Z",
+      "context": {
+        "window_id": 2,
+        "focused": true
+      }
+    },
+    {
+      "event_type": "WINDOW_UNFOCUSED",
+      "timestamp": "2025-01-12T09:10:00.100Z",
+      "context": {
+        "window_id": null
+      }
+    },
+    {
+      "event_type": "WINDOW_FOCUSED",
+      "timestamp": "2025-01-12T09:10:00.200Z",
+      "context": {
+        "window_id": 2
+      }
+    },
+    {
+      "event_type": "TAB_CLOSE",
+      "timestamp": "2025-01-12T09:12:00.000Z",
+      "context": {
+        "tab_id": 124,
+        "window_id": 1,
+        "is_window_closing": false
+      }
+    },
+    {
+      "event_type": "WINDOW_CLOSED",
+      "timestamp": "2025-01-12T09:14:00.000Z",
+      "context": {
+        "window_id": 2
+      }
+    },
+    {
+      "event_type": "TAB_CLOSE",
+      "timestamp": "2025-01-12T09:15:00.000Z",
+      "context": {
+        "tab_id": 123,
+        "window_id": 1,
+        "is_window_closing": false
+      }
+    },
+    {
+      "event_type": "RECORDING_STOPPED",
+      "timestamp": "2025-01-12T09:15:30.000Z",
+      "context": {}
+    }
+  ]
+}
+

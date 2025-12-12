@@ -7,22 +7,38 @@ const morgan = require('morgan');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/auth');
 const postsRoutes = require('./routes/posts');
+const trackingRoutes = require('./routes/tracking');
+const trackingFilesRoutes = require('./routes/tracking-files');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-connectDB(process.env.MONGO_URI);
+// MongoDB is optional - only connect if MONGO_URI is provided
+if (process.env.MONGO_URI) {
+  connectDB(process.env.MONGO_URI);
+} else {
+  console.log('MongoDB URI not provided - running without database');
+}
 
 // Middlewares
-app.use(helmet());
-app.use(cors({ origin: true })); // configure origin for production
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+app.use(cors({ 
+  origin: true,  // Allow all origins (including chrome-extension://)
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 if (process.env.NODE_ENV === 'development') app.use(morgan('dev'));
 
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/posts', postsRoutes);
+app.use('/api/tracking', trackingRoutes);
+app.use('/api/tracking-files', trackingFilesRoutes);
 
 // Health check
 app.get('/', (req, res) => res.send({ ok: true }));

@@ -1,0 +1,28 @@
+ICON PLACEHOLDER INSTRUCTIONS
+=============================
+
+The manifest.json references "icon.png" but this file is not included in the repository.
+
+OPTION 1: Use Without Icon (Recommended for Testing)
+-----------------------------------------------------
+The extension will work perfectly fine without an icon. Chrome will display a default puzzle piece icon.
+You can load and use the extension immediately.
+
+OPTION 2: Add Your Own Icon
+----------------------------
+1. Create or download a PNG image (128x128 pixels recommended)
+2. Name it "icon.png"
+3. Place it in the browser-tracker-extension/ folder
+4. The same icon will be used for all sizes (16, 48, 128)
+
+OPTION 3: Remove Icon References
+---------------------------------
+Edit manifest.json and remove the "icons" section:
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+
+The extension will function identically regardless of which option you choose.
+

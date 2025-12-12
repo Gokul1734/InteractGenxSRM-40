@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Browser Navigation Tracker",
+  "version": "1.0.0",
+  "description": "Records browser navigation activity with user-controlled start/stop",
+  "permissions": [
+    "tabs",
+    "storage",
+    "windows",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "http://localhost:5000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Browser Navigation Tracker"
+  }
+}

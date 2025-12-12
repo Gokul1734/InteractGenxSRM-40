@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser Navigation Tracker</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 350px;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #333;
+    }
+
+    .container {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    }
+
+    h1 {
+      font-size: 20px;
+      margin-bottom: 20px;
+      color: #667eea;
+      text-align: center;
+      font-weight: 600;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #555;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.3s;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .status {
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 15px;
+      text-align: center;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .status.recording {
+      background: #d4edda;
+      color: #155724;
+      border: 2px solid #c3e6cb;
+    }
+
+    .status.stopped {
+      background: #f8d7da;
+      color: #721c24;
+      border: 2px solid #f5c6cb;
+    }
+
+    .status.idle {
+      background: #fff3cd;
+      color: #856404;
+      border: 2px solid #ffeaa7;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-start {
+      background: #28a745;
+      color: white;
+    }
+
+    .btn-start:hover:not(:disabled) {
+      background: #218838;
+    }
+
+    .btn-stop {
+      background: #dc3545;
+      color: white;
+    }
+
+    .btn-stop:hover:not(:disabled) {
+      background: #c82333;
+    }
+
+    .btn-export {
+      background: #667eea;
+      color: white;
+      width: 100%;
+      margin-top: 10px;
+    }
+
+    .btn-export:hover:not(:disabled) {
+      background: #5568d3;
+    }
+
+    .info {
+      font-size: 11px;
+      color: #666;
+      text-align: center;
+      margin-top: 15px;
+      line-height: 1.4;
+    }
+
+    .event-count {
+      text-align: center;
+      margin-top: 10px;
+      font-size: 13px;
+      color: #667eea;
+      font-weight: 600;
+    }
+
+    .auto-save-info {
+      background: #e8f5e9;
+      border: 1px solid #a5d6a7;
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 11px;
+      color: #2e7d32;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    .auto-save-info code {
+      background: #fff;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      color: #1b5e20;
+      display: block;
+      margin-top: 5px;
+      word-break: break-all;
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧭 Navigation Tracker</h1>
+    
+    <div id="statusDisplay" class="status idle">
+      Recording: OFF
+    </div>
+
+    <div id="eventCount" class="event-count hidden">
+      Events captured: <span id="countNumber">0</span>
+    </div>
+
+    <div id="autoSaveInfo" class="auto-save-info hidden">
+      📁 Auto-saving to Backend: <code id="filename">Backend/tracking-data/folder/</code>
+    </div>
+
+    <div id="inputSection">
+      <div class="form-group">
+        <label for="userCode">User Code (number)</label>
+        <input type="number" id="userCode" placeholder="e.g., 1001" required>
+      </div>
+
+      <div class="form-group">
+        <label for="sessionCode">Session Code (string)</label>
+        <input type="text" id="sessionCode" placeholder="e.g., ABC123" required>
+      </div>
+    </div>
+
+    <div class="button-group">
+      <button id="startBtn" class="btn-start">Start Recording</button>
+      <button id="stopBtn" class="btn-stop" disabled>Stop Recording</button>
+    </div>
+
+    <button id="exportBtn" class="btn-export hidden">Export JSON</button>
+
+    <div class="info">
+      Enter your codes and click Start to begin tracking. Data auto-saves every 2 seconds to Backend folder. Make sure backend is running!
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+
