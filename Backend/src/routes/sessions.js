@@ -14,6 +14,10 @@ const {
   validateSessionCode,
   getFullSessionData
 } = require('../controllers/sessionController');
+const {
+  sendInvitation,
+  getSessionInvitations
+} = require('../controllers/invitationController');
 
 // @route   POST /api/sessions
 // @desc    Create a new session
@@ -62,6 +66,14 @@ router.post('/:session_code/end', endSession);
 // @route   GET /api/sessions/:session_code/full
 // @desc    Get full session data with all navigation tracking
 router.get('/:session_code/full', getFullSessionData);
+
+// @route   POST /api/sessions/:session_code/invitations
+// @desc    Send invitation to join a session (only session creator)
+router.post('/:session_code/invitations', sendInvitation);
+
+// @route   GET /api/sessions/:session_code/invitations
+// @desc    Get all invitations for a session
+router.get('/:session_code/invitations', getSessionInvitations);
 
 module.exports = router;
 

@@ -10,6 +10,7 @@ const postsRoutes = require('./routes/posts');
 const trackingFilesRoutes = require('./routes/tracking-files');
 const usersRoutes = require('./routes/users');
 const sessionsRoutes = require('./routes/sessions');
+const invitationsRoutes = require('./routes/invitations');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -41,6 +42,7 @@ app.use('/api/posts', postsRoutes);
 app.use('/api/tracking-files', trackingFilesRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/sessions', sessionsRoutes);
+app.use('/api/invitations', invitationsRoutes);
 
 // Health check
 app.get('/', (req, res) => res.send({ ok: true }));
