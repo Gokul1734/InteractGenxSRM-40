@@ -1,0 +1,34 @@
+// Configuration for Browser Navigation Tracker Extension
+// This file centralizes all environment-specific URLs
+
+// ============================================================================
+// ENVIRONMENT CONFIGURATION
+// ============================================================================
+// Set to 'production' for deployed backend, 'development' for local testing
+const ENVIRONMENT = 'production'; // Change to 'development' for local testing
+
+// ============================================================================
+// URL CONFIGURATIONS
+// ============================================================================
+const CONFIG = {
+  production: {
+    API_BASE_URL: 'https://interactgenxsrm-40-1.onrender.com/api/tracking-files',
+    DASHBOARD_URL: 'https://interactgenxsrm-40.vercel.app', // Update when frontend is deployed
+  },
+  development: {
+    API_BASE_URL: 'http://localhost:5000/api/tracking-files',
+    DASHBOARD_URL: 'http://localhost:5173',
+  }
+};
+
+// ============================================================================
+// EXPORTED CONFIGURATION
+// ============================================================================
+const API_BASE_URL = CONFIG[ENVIRONMENT].API_BASE_URL;
+const DASHBOARD_URL = CONFIG[ENVIRONMENT].DASHBOARD_URL;
+
+// Log current environment on load
+console.log(`[Config] Environment: ${ENVIRONMENT}`);
+console.log(`[Config] API URL: ${API_BASE_URL}`);
+console.log(`[Config] Dashboard URL: ${DASHBOARD_URL}`);
+

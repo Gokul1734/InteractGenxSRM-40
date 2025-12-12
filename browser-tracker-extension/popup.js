@@ -1,8 +1,5 @@
 // Popup UI Controller for Browser Navigation Tracker
-
-// Backend Configuration
-const API_BASE_URL = 'http://localhost:5000/api/tracking-files';
-const DASHBOARD_URL = 'http://localhost:5173';
+// Uses configuration from config.js (API_BASE_URL, DASHBOARD_URL)
 
 // DOM Elements
 const userCodeInput = document.getElementById('userCode');

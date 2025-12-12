@@ -1,8 +1,9 @@
 // Background Service Worker - Browser Navigation Tracker
 // This tracks ALL navigation events and stores them in a structured JSON format
 
-// Backend Configuration
-const API_BASE_URL = 'http://localhost:5000/api/tracking-files';
+// Import configuration
+importScripts('config.js');
+// API_BASE_URL is now available from config.js
 
 // Global state
 let recordingData = null;
