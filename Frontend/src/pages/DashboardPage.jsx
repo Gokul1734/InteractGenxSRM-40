@@ -362,14 +362,8 @@ export default function DashboardPage({ user, activeKey, onNavigate, onLogout })
         )}
 
         {activeKey === 'pages' && (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Panel title="Navigation Pages">
-              This will show captured navigation pages, grouped by session. 
-              Join a live session to see real-time page navigation.
-            </Panel>
-            <Panel title="Filters">
-              Filter by domain, date range, and event types will be available soon.
-            </Panel>
+          <div className="flex-1 min-h-0 flex flex-col">
+            <PagesDashboard />
           </div>
         )}
 
