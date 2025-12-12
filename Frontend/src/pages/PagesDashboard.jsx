@@ -235,7 +235,7 @@ export default function PagesDashboard() {
       const editor = editorRef.current;
       if (!editor) return;
       if (editor.contains(range.commonAncestorContainer)) {
-        selectionRef.current = range;
+        selectionRef.current = range.cloneRange();
       }
     } catch {
       // ignore
@@ -244,13 +244,32 @@ export default function PagesDashboard() {
 
   const restoreSelection = () => {
     try {
-      const range = selectionRef.current;
       const editor = editorRef.current;
-      if (!range || !editor) return;
       const sel = window.getSelection();
-      if (!sel) return;
+      if (!editor || !sel) return;
+
+      // Prefer live selection if it's already inside the editor.
+      if (sel.rangeCount > 0) {
+        const live = sel.getRangeAt(0);
+        if (editor.contains(live.commonAncestorContainer)) {
+          return;
+        }
+      }
+
+      const saved = selectionRef.current;
+      if (saved && editor.contains(saved.commonAncestorContainer)) {
+        sel.removeAllRanges();
+        sel.addRange(saved);
+        return;
+      }
+
+      // Fallback: put caret at end of editor (prevents "stuck" toggles).
+      const end = document.createRange();
+      end.selectNodeContents(editor);
+      end.collapse(false);
       sel.removeAllRanges();
-      sel.addRange(range);
+      sel.addRange(end);
+      selectionRef.current = end.cloneRange();
     } catch {
       // ignore
     }
@@ -334,12 +353,54 @@ export default function PagesDashboard() {
     try {
       editorRef.current?.focus();
       restoreSelection();
+
+      // Custom list indentation: execCommand('indent'/'outdent') is unreliable for <li>.
+      if (command === 'indent' || command === 'outdent') {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          const li = findClosest(range.startContainer, (n) => n?.nodeName === 'LI');
+          if (li && editorRef.current?.contains(li)) {
+            if (command === 'indent') {
+              indentListItem(li);
+            } else {
+              outdentListItem(li);
+            }
+            // Persist updated HTML and selection
+            if (editorRef.current) updateSelected({ contentHtml: editorRef.current.innerHTML });
+            saveSelection();
+            return;
+          }
+        }
+      }
+
+      // Custom list alignment: text-align alone doesn't move list markers when list-style-position is "outside".
+      // For center/right alignment, switch list items to list-style-position: inside so bullets "move" with the text.
+      if (command === 'justifyLeft' || command === 'justifyCenter' || command === 'justifyRight') {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          const li = findClosest(range.startContainer, (n) => n?.nodeName === 'LI');
+          if (li && editorRef.current?.contains(li)) {
+            const align = command === 'justifyLeft' ? 'left' : command === 'justifyCenter' ? 'center' : 'right';
+            li.style.textAlign = align;
+            // This is the critical bit that makes the bullet marker participate in alignment.
+            li.style.listStylePosition = align === 'left' ? 'outside' : 'inside';
+            if (editorRef.current) updateSelected({ contentHtml: editorRef.current.innerHTML });
+            saveSelection();
+            return;
+          }
+        }
+      }
+
       // eslint-disable-next-line deprecation/deprecation
       document.execCommand(command, false, value);
       // Persist updated HTML
       if (editorRef.current) {
         updateSelected({ contentHtml: editorRef.current.innerHTML });
       }
+      // Save selection after DOM mutation so toggles can be turned off and combined.
+      saveSelection();
     } catch {
       // ignore
     }
@@ -354,6 +415,106 @@ export default function PagesDashboard() {
     return null;
   };
 
+  const placeCaretAtStart = (el) => {
+    try {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      r.collapse(true);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(r);
+      selectionRef.current = r.cloneRange();
+    } catch {
+      // ignore
+    }
+  };
+
+  const ensureNestedList = (parentLi, listTagName) => {
+    const existing = Array.from(parentLi.children || []).find((c) => c?.nodeName === listTagName);
+    if (existing) return existing;
+    const list = document.createElement(listTagName.toLowerCase());
+    parentLi.appendChild(list);
+    return list;
+  };
+
+  const indentListItem = (li) => {
+    const parentList = li.parentNode;
+    if (!parentList || (parentList.nodeName !== 'UL' && parentList.nodeName !== 'OL')) {
+      // fallback
+      // eslint-disable-next-line deprecation/deprecation
+      document.execCommand('indent', false);
+      return;
+    }
+
+    // Indent by nesting under previous sibling <li>
+    const prevLi = li.previousElementSibling;
+    if (!prevLi || prevLi.nodeName !== 'LI') {
+      // If no previous sibling, cannot indent (Notion behaves similarly)
+      return;
+    }
+
+    const listTag = parentList.nodeName; // UL or OL
+    const nested = ensureNestedList(prevLi, listTag);
+    nested.appendChild(li);
+    placeCaretAtStart(li);
+
+    // Clean up empty list (rare but safe)
+    if (parentList.children.length === 0) parentList.remove();
+  };
+
+  const outdentListItem = (li, opts = {}) => {
+    const { forceRootToParagraph = false } = opts;
+    const parentList = li.parentNode;
+    if (!parentList || (parentList.nodeName !== 'UL' && parentList.nodeName !== 'OL')) {
+      // eslint-disable-next-line deprecation/deprecation
+      document.execCommand('outdent', false);
+      return;
+    }
+
+    const parentLi = findClosest(parentList, (n) => n?.nodeName === 'LI');
+    const grandList = parentLi?.parentNode;
+
+    if (!parentLi || !grandList || (grandList.nodeName !== 'UL' && grandList.nodeName !== 'OL')) {
+      // Already top-level: convert to paragraph when forced (Backspace at start),
+      // or when empty (exit list).
+      const text = (li.textContent || '').replace(/\u200B/g, '').trim();
+      const hasMedia = li.querySelector && li.querySelector('img, video, audio');
+      const isEmpty = text.length === 0 && !hasMedia;
+
+      if (forceRootToParagraph || isEmpty) {
+        const p = document.createElement('p');
+        // Preserve inline formatting from the LI when possible.
+        const liHtml = li.innerHTML || '';
+        p.innerHTML = liHtml.trim().length ? liHtml : '<br/>';
+        parentList.parentNode?.insertBefore(p, parentList.nextSibling);
+        li.remove();
+        if (parentList.children.length === 0) parentList.remove();
+        placeCaretAtStart(p);
+      }
+      return;
+    }
+
+    // Move li to the grand list after the parentLi
+    grandList.insertBefore(li, parentLi.nextSibling);
+    placeCaretAtStart(li);
+
+    // Remove now-empty nested list
+    if (parentList.children.length === 0) parentList.remove();
+  };
+
+  const isCaretAtStartOfElement = (range, el) => {
+    try {
+      if (!range || !el) return false;
+      const pre = range.cloneRange();
+      pre.selectNodeContents(el);
+      pre.setEnd(range.startContainer, range.startOffset);
+      const before = (pre.toString() || '').replace(/\u200B/g, '').trim();
+      return before.length === 0;
+    } catch {
+      return false;
+    }
+  };
+
   const handleEditorKeyDown = (e) => {
     // Keyboard indentation controls:
     // - Tab => indent
@@ -366,6 +527,7 @@ export default function PagesDashboard() {
 
     if (e.key === 'Tab') {
       e.preventDefault();
+      // Tab / Shift+Tab should indent/outdent list items and normal blocks.
       exec(e.shiftKey ? 'outdent' : 'indent');
       return;
     }
@@ -378,22 +540,16 @@ export default function PagesDashboard() {
       const range = sel.getRangeAt(0);
       const startNode = range.startContainer;
 
-      // If we are inside an LI and it's empty, outdent (or remove list level)
+      // If we are inside an LI and caret is at the very start, outdent one level.
+      // If we're already at root level, convert bullet -> normal paragraph.
       const li = findClosest(startNode, (n) => n?.nodeName === 'LI');
       if (li && editorRef.current.contains(li)) {
-        const text = (li.textContent || '').replace(/\u200B/g, '').trim();
-        const hasMedia = li.querySelector && li.querySelector('img, video, audio');
-        const isEmpty = text.length === 0 && !hasMedia;
-
-        // Also consider caret at the very start of the LI
-        const atStart =
-          (range.startOffset === 0) ||
-          (startNode.nodeType === Node.ELEMENT_NODE && range.startOffset === 0);
-
-        if (isEmpty || atStart) {
-          // Prevent browser from removing the whole list unexpectedly; instead outdent one level.
+        const atStart = isCaretAtStartOfElement(range, li);
+        if (atStart) {
           e.preventDefault();
-          exec('outdent');
+          outdentListItem(li, { forceRootToParagraph: true });
+          if (editorRef.current) updateSelected({ contentHtml: editorRef.current.innerHTML });
+          saveSelection();
           return;
         }
       }
