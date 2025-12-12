@@ -7,7 +7,6 @@ const morgan = require('morgan');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/auth');
 const postsRoutes = require('./routes/posts');
-const trackingRoutes = require('./routes/tracking');
 const trackingFilesRoutes = require('./routes/tracking-files');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -37,7 +36,6 @@ if (process.env.NODE_ENV === 'development') app.use(morgan('dev'));
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/posts', postsRoutes);
-app.use('/api/tracking', trackingRoutes);
 app.use('/api/tracking-files', trackingFilesRoutes);
 
 // Health check

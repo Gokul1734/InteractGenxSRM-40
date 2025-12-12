@@ -23,6 +23,7 @@ const NavigationEventSchema = new mongoose.Schema({
       'PAGE_OPEN',
       'PAGE_URL_CHANGE',
       'PAGE_RELOAD',
+      'PAGE_LOADED',
       'PAGE_VISIBLE',
       'PAGE_HIDDEN',
       'BACK_NAVIGATION',
@@ -184,4 +185,3 @@ NavigationTrackingSchema.statics.getCombinedSessionEvents = async function(sessi
 };
 
 module.exports = mongoose.model('NavigationTracking', NavigationTrackingSchema);
-

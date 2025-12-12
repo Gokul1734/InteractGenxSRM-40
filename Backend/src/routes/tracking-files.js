@@ -1,30 +1,19 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs').promises;
-const path = require('path');
+const mongoose = require('mongoose');
 
-// Base directory for tracking data (within project)
-const TRACKING_DATA_DIR = path.join(__dirname, '../../tracking-data');
-
-// Ensure tracking data directory exists
-async function ensureTrackingDir() {
-  try {
-    await fs.access(TRACKING_DATA_DIR);
-  } catch {
-    await fs.mkdir(TRACKING_DATA_DIR, { recursive: true });
-  }
-}
-
-// Initialize on module load
-ensureTrackingDir();
+// Import models
+const User = require('../models/User');
+const Session = require('../models/Session');
+const NavigationTracking = require('../models/NavigationTracking');
 
 // @route   POST /api/tracking-files/start
-// @desc    Start a new tracking session (create folder and initial file)
+// @desc    Start a new tracking session (directly in MongoDB)
 // @access  Public
 router.post('/start', async (req, res) => {
   console.log('📥 START request received:', req.body);
   try {
-    const { user_code, session_code } = req.body;
+    const { user_code, session_code, user_name, user_email, session_name } = req.body;
 
     if (!user_code || !session_code) {
       return res.status(400).json({
@@ -33,36 +22,51 @@ router.post('/start', async (req, res) => {
       });
     }
 
-    // Create folder path: tracking-data/{usercode}_{sessioncode}/
-    const folderName = `${user_code}_${session_code}`;
-    const folderPath = path.join(TRACKING_DATA_DIR, folderName);
-    
-    // Create folder if doesn't exist
-    await fs.mkdir(folderPath, { recursive: true });
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not connected'
+      });
+    }
 
-    // Initialize data structure
-    const initialData = {
+    // Create or find user (if user info provided)
+    let user = null;
+    if (user_name && user_email) {
+      user = await User.findOrCreateUser({ user_code, user_name, user_email });
+    }
+
+    // Create or find collaborative session
+    const session = await Session.findOrCreateSession(
+      session_code,
+      session_name || `Session ${session_code}`,
+      user
+    );
+
+    // Add user to session members if user exists
+    if (user) {
+      await session.addMember(user);
+    }
+
+    // Create navigation tracking record for this user in this session
+    const tracking = await NavigationTracking.findOrCreateSession(
       user_code,
       session_code,
-      recording_started_at: new Date().toISOString(),
-      recording_ended_at: null,
-      navigation_events: []
-    };
+      user?._id,
+      session._id
+    );
 
-    // Save initial file
-    const filePath = path.join(folderPath, 'data.json');
-    await fs.writeFile(filePath, JSON.stringify(initialData, null, 2));
-
-    console.log(`✓ Session started: ${folderName}`);
+    console.log(`✓ Session started: ${user_code}_${session_code} (MongoDB)`);
 
     res.status(201).json({
       success: true,
       message: 'Tracking session started',
       data: {
-        folder: folderName,
-        path: folderPath,
+        folder: `${user_code}_${session_code}`,
         user_code,
-        session_code
+        session_code,
+        tracking_id: tracking._id,
+        session_id: session._id
       }
     });
 
@@ -77,10 +81,10 @@ router.post('/start', async (req, res) => {
 });
 
 // @route   POST /api/tracking-files/update
-// @desc    Update tracking data with new events (overwrites file)
+// @desc    Update tracking data with new events (LIVE - every 2 seconds)
 // @access  Public
 router.post('/update', async (req, res) => {
-  console.log('📥 UPDATE request received for:', req.body.user_code, req.body.session_code);
+  console.log('📥 LIVE UPDATE for:', req.body.user_code, req.body.session_code);
   try {
     const { user_code, session_code, data } = req.body;
 
@@ -91,25 +95,51 @@ router.post('/update', async (req, res) => {
       });
     }
 
-    // Get folder and file path
-    const folderName = `${user_code}_${session_code}`;
-    const folderPath = path.join(TRACKING_DATA_DIR, folderName);
-    const filePath = path.join(folderPath, 'data.json');
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not connected'
+      });
+    }
 
-    // Ensure folder exists
-    await fs.mkdir(folderPath, { recursive: true });
+    // Find or create tracking record
+    let tracking = await NavigationTracking.findOne({
+      user_code,
+      session_code,
+      is_active: true
+    });
 
-    // Write complete data (overwrite)
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+    if (!tracking) {
+      // Create new tracking if doesn't exist
+      tracking = await NavigationTracking.create({
+        user_code,
+        session_code,
+        recording_started_at: data.recording_started_at || new Date(),
+        navigation_events: [],
+        is_active: true
+      });
+    }
 
-    console.log(`✓ Updated: ${folderName} (${data.navigation_events?.length || 0} events)`);
+    // LIVE UPDATE: Replace navigation events with latest data
+    tracking.navigation_events = data.navigation_events || [];
+    tracking.event_count = tracking.navigation_events.length;
+
+    if (data.recording_ended_at) {
+      tracking.recording_ended_at = data.recording_ended_at;
+    }
+
+    await tracking.save();
+
+    console.log(`✓ LIVE: ${user_code}_${session_code} → ${tracking.event_count} events`);
 
     res.status(200).json({
       success: true,
-      message: 'Data updated',
+      message: 'Data updated live',
       data: {
-        folder: folderName,
-        event_count: data.navigation_events?.length || 0
+        folder: `${user_code}_${session_code}`,
+        event_count: tracking.event_count,
+        updated_at: new Date().toISOString()
       }
     });
 
@@ -137,28 +167,30 @@ router.post('/stop', async (req, res) => {
       });
     }
 
-    const folderName = `${user_code}_${session_code}`;
-    const filePath = path.join(TRACKING_DATA_DIR, folderName, 'data.json');
+    const tracking = await NavigationTracking.findOne({
+      user_code,
+      session_code,
+      is_active: true
+    });
 
-    // Read existing data
-    const fileContent = await fs.readFile(filePath, 'utf8');
-    const data = JSON.parse(fileContent);
+    if (!tracking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Active session not found'
+      });
+    }
 
-    // Update end time
-    data.recording_ended_at = new Date().toISOString();
+    await tracking.endRecording();
 
-    // Save updated data
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-
-    console.log(`✓ Session stopped: ${folderName}`);
+    console.log(`✓ Session stopped: ${user_code}_${session_code}`);
 
     res.status(200).json({
       success: true,
       message: 'Tracking session stopped',
       data: {
-        folder: folderName,
-        event_count: data.navigation_events?.length || 0,
-        duration_ms: new Date(data.recording_ended_at) - new Date(data.recording_started_at)
+        folder: `${user_code}_${session_code}`,
+        event_count: tracking.event_count,
+        duration_ms: tracking.recording_ended_at - tracking.recording_started_at
       }
     });
 
@@ -173,32 +205,70 @@ router.post('/stop', async (req, res) => {
 });
 
 // @route   GET /api/tracking-files/session/:user_code/:session_code
-// @desc    Get tracking session data
+// @desc    Get tracking session data for a specific user
 // @access  Public
 router.get('/session/:user_code/:session_code', async (req, res) => {
   try {
     const { user_code, session_code } = req.params;
 
-    const folderName = `${user_code}_${session_code}`;
-    const filePath = path.join(TRACKING_DATA_DIR, folderName, 'data.json');
+    const tracking = await NavigationTracking.findOne({
+      user_code: parseInt(user_code),
+      session_code
+    }).populate('user').populate('session');
 
-    const fileContent = await fs.readFile(filePath, 'utf8');
-    const data = JSON.parse(fileContent);
-
-    res.status(200).json({
-      success: true,
-      data
-    });
-
-  } catch (error) {
-    if (error.code === 'ENOENT') {
+    if (!tracking) {
       return res.status(404).json({
         success: false,
         message: 'Session not found'
       });
     }
 
+    res.status(200).json({
+      success: true,
+      data: {
+        user_code: tracking.user_code,
+        session_code: tracking.session_code,
+        recording_started_at: tracking.recording_started_at,
+        recording_ended_at: tracking.recording_ended_at,
+        navigation_events: tracking.navigation_events,
+        event_count: tracking.event_count,
+        is_active: tracking.is_active
+      }
+    });
+
+  } catch (error) {
     console.error('Error fetching session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/tracking-files/live/:session_code
+// @desc    Get LIVE collaborative data for all users in a session
+// @access  Public
+router.get('/live/:session_code', async (req, res) => {
+  try {
+    const { session_code } = req.params;
+
+    const collaborativeData = await NavigationTracking.getCombinedSessionEvents(session_code);
+
+    if (!collaborativeData || collaborativeData.total_participants === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No data found for this session'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: collaborativeData
+    });
+
+  } catch (error) {
+    console.error('Error fetching live data:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -212,32 +282,19 @@ router.get('/session/:user_code/:session_code', async (req, res) => {
 // @access  Public
 router.get('/sessions', async (req, res) => {
   try {
-    await ensureTrackingDir();
-    
-    const folders = await fs.readdir(TRACKING_DATA_DIR);
-    const sessions = [];
+    const trackings = await NavigationTracking.find()
+      .sort({ recording_started_at: -1 })
+      .select('user_code session_code recording_started_at recording_ended_at event_count is_active');
 
-    for (const folder of folders) {
-      const filePath = path.join(TRACKING_DATA_DIR, folder, 'data.json');
-      
-      try {
-        const fileContent = await fs.readFile(filePath, 'utf8');
-        const data = JSON.parse(fileContent);
-        
-        sessions.push({
-          folder,
-          user_code: data.user_code,
-          session_code: data.session_code,
-          started_at: data.recording_started_at,
-          ended_at: data.recording_ended_at,
-          event_count: data.navigation_events?.length || 0,
-          is_active: !data.recording_ended_at
-        });
-      } catch (err) {
-        // Skip invalid folders
-        console.warn(`Skipping invalid folder: ${folder}`);
-      }
-    }
+    const sessions = trackings.map(t => ({
+      folder: `${t.user_code}_${t.session_code}`,
+      user_code: t.user_code,
+      session_code: t.session_code,
+      started_at: t.recording_started_at,
+      ended_at: t.recording_ended_at,
+      event_count: t.event_count,
+      is_active: t.is_active
+    }));
 
     res.status(200).json({
       success: true,
@@ -255,25 +312,64 @@ router.get('/sessions', async (req, res) => {
   }
 });
 
+// @route   GET /api/tracking-files/sessions/:session_code/members
+// @desc    Get all members and their live status in a session
+// @access  Public
+router.get('/sessions/:session_code/members', async (req, res) => {
+  try {
+    const { session_code } = req.params;
+
+    const trackings = await NavigationTracking.find({ session_code })
+      .populate('user')
+      .sort({ recording_started_at: 1 });
+
+    const members = trackings.map(t => ({
+      user_code: t.user_code,
+      user_name: t.user?.user_name || `User ${t.user_code}`,
+      is_active: t.is_active,
+      event_count: t.event_count,
+      last_event: t.navigation_events.length > 0 
+        ? t.navigation_events[t.navigation_events.length - 1] 
+        : null,
+      recording_started_at: t.recording_started_at
+    }));
+
+    res.status(200).json({
+      success: true,
+      session_code,
+      member_count: members.length,
+      active_count: members.filter(m => m.is_active).length,
+      members
+    });
+
+  } catch (error) {
+    console.error('Error fetching members:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+});
+
 // @route   DELETE /api/tracking-files/session/:user_code/:session_code
-// @desc    Delete a tracking session folder
+// @desc    Delete a tracking session
 // @access  Public
 router.delete('/session/:user_code/:session_code', async (req, res) => {
   try {
     const { user_code, session_code } = req.params;
 
-    const folderName = `${user_code}_${session_code}`;
-    const folderPath = path.join(TRACKING_DATA_DIR, folderName);
+    await NavigationTracking.deleteOne({
+      user_code: parseInt(user_code),
+      session_code
+    });
 
-    // Delete folder and all contents
-    await fs.rm(folderPath, { recursive: true, force: true });
-
-    console.log(`✓ Session deleted: ${folderName}`);
+    console.log(`✓ Session deleted: ${user_code}_${session_code}`);
 
     res.status(200).json({
       success: true,
       message: 'Session deleted',
-      data: { folder: folderName }
+      data: { folder: `${user_code}_${session_code}` }
     });
 
   } catch (error) {
@@ -292,15 +388,18 @@ router.delete('/session/:user_code/:session_code', async (req, res) => {
 router.get('/health', async (req, res) => {
   console.log('📥 HEALTH check request received');
   try {
-    await ensureTrackingDir();
-    const folders = await fs.readdir(TRACKING_DATA_DIR);
-    
+    const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+    const count = mongoose.connection.readyState === 1 
+      ? await NavigationTracking.countDocuments() 
+      : 0;
+
     res.status(200).json({
       success: true,
-      message: 'Tracking files service is running',
+      message: 'Tracking service is running',
       data: {
-        tracking_dir: TRACKING_DATA_DIR,
-        session_count: folders.length
+        storage: 'MongoDB',
+        database_status: dbStatus,
+        session_count: count
       }
     });
   } catch (error) {
