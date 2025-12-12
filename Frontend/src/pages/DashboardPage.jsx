@@ -1,5 +1,6 @@
 import React from 'react';
 import TopNav from '../components/TopNav.jsx';
+import PagesDashboard from './PagesDashboard.jsx';
 
 function Panel({ title, children }) {
   return (
@@ -22,10 +23,10 @@ function Panel({ title, children }) {
 
 export default function DashboardPage({ user, activeKey, onNavigate, onLogout }) {
   return (
-    <div className="min-h-screen" style={{ background: 'var(--color-background)' }}>
+    <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-background)' }}>
       <TopNav activeKey={activeKey} onNavigate={onNavigate} user={user} onLogout={onLogout} />
 
-      <main className="w-full px-8 py-8">
+      <main className="w-full flex-1 min-h-0 px-8 py-8 flex flex-col">
         {activeKey === 'home' && (
           <div className="grid gap-6 lg:grid-cols-2">
             <Panel title="Overview">
@@ -50,13 +51,8 @@ export default function DashboardPage({ user, activeKey, onNavigate, onLogout })
         )}
 
         {activeKey === 'pages' && (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Panel title="Pages">
-              This will show captured navigation pages, grouped by session (placeholder for now).
-            </Panel>
-            <Panel title="Filters">
-              Filter by domain, date range, and event types (placeholder).
-            </Panel>
+          <div className="flex-1 min-h-0 flex flex-col">
+            <PagesDashboard />
           </div>
         )}
 

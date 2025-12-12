@@ -1,0 +1,869 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FileText,
+  Plus,
+  Trash2,
+  Users,
+  User,
+  Bold,
+  Italic,
+  Underline,
+  List,
+  ListOrdered,
+  Indent,
+  Outdent,
+  Image as ImageIcon,
+  Link as LinkIcon,
+  Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+} from 'lucide-react';
+
+const STORAGE_KEY = 'cobrowser_pages_v1';
+
+function uid() {
+  return `pg_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function loadInitialState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function defaultState() {
+  const teamId = uid();
+  const personalId = uid();
+  return {
+    version: 1,
+    selected: { workspace: 'team', pageId: teamId },
+    workspaces: {
+      team: [
+        {
+          id: teamId,
+          title: 'Team Notes',
+          contentHtml: '<p>Shared notes for the team workspace.</p>',
+          updatedAt: nowIso(),
+        },
+      ],
+      personal: [
+        {
+          id: personalId,
+          title: 'Personal Notes',
+          contentHtml: '<p>Private notes for your personal workspace.</p>',
+          updatedAt: nowIso(),
+        },
+      ],
+    },
+  };
+}
+
+function saveState(state) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+}
+
+function SidebarSection({
+  icon: Icon,
+  title,
+  workspaceKey,
+  pages,
+  selectedPageId,
+  onSelect,
+  onAdd,
+  onDelete,
+}) {
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Icon size={16} style={{ color: 'var(--color-text-secondary)' }} />
+          <div className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)', letterSpacing: '0.04em' }}>
+            {title}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onAdd(workspaceKey)}
+          className="rounded-md p-1"
+          style={{
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-surface-dark)',
+            color: 'var(--color-text-secondary)',
+          }}
+          aria-label={`Add page to ${title}`}
+          title="Add page"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+
+      <div className="space-y-1">
+        {pages.map((p) => {
+          const isActive = p.id === selectedPageId;
+          return (
+            <div
+              key={p.id}
+              className="group flex items-center justify-between gap-2 rounded-lg px-3 py-2"
+              style={{
+                background: isActive ? 'var(--color-surface)' : 'transparent',
+                border: '1px solid',
+                borderColor: isActive ? 'var(--color-border-hover)' : 'transparent',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => onSelect(workspaceKey, p.id)}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                style={{ color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}
+                title={p.title}
+              >
+                <FileText size={14} style={{ color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }} />
+                <span className="truncate text-sm font-medium">{p.title || 'Untitled'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onDelete(workspaceKey, p.id)}
+                className="invisible rounded-md p-1 group-hover:visible"
+                style={{
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                }}
+                aria-label="Delete page"
+                title="Delete page"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function PagesDashboard() {
+  const initial = useMemo(() => loadInitialState() ?? defaultState(), []);
+  const [state, setState] = useState(initial);
+  const [isVisible, setIsVisible] = useState(false);
+  const saveTimer = useRef(null);
+  const editorRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const selectionRef = useRef(null);
+  const draggedImageIdRef = useRef(null);
+
+  useEffect(() => {
+    // slide in
+    const t = setTimeout(() => setIsVisible(true), 10);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    // debounced persistence
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => saveState(state), 250);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [state]);
+
+  const selectedWorkspaceKey = state.selected.workspace;
+  const selectedPageId = state.selected.pageId;
+
+  const selectedPage = useMemo(() => {
+    const list = state.workspaces[selectedWorkspaceKey] || [];
+    return list.find((p) => p.id === selectedPageId) || null;
+  }, [state, selectedWorkspaceKey, selectedPageId]);
+
+  // Migrate legacy "content" -> "contentHtml"
+  useEffect(() => {
+    setState((prev) => {
+      const migrateList = (list) =>
+        (list || []).map((p) => {
+          if (p.contentHtml != null) return p;
+          const text = typeof p.content === 'string' ? p.content : '';
+          const escaped = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br/>');
+          const { content, ...rest } = p;
+          return { ...rest, contentHtml: escaped ? `<p>${escaped}</p>` : '<p></p>' };
+        });
+
+      const next = {
+        ...prev,
+        workspaces: {
+          team: migrateList(prev.workspaces?.team),
+          personal: migrateList(prev.workspaces?.personal),
+        },
+      };
+      return next;
+    });
+    // run once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When selection changes, update editor HTML without re-rendering the contentEditable children
+  useEffect(() => {
+    if (!editorRef.current) return;
+    const html = selectedPage?.contentHtml ?? '';
+    if (editorRef.current.innerHTML !== html) {
+      editorRef.current.innerHTML = html;
+    }
+  }, [selectedWorkspaceKey, selectedPageId, selectedPage?.contentHtml]);
+
+  const saveSelection = () => {
+    try {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      const editor = editorRef.current;
+      if (!editor) return;
+      if (editor.contains(range.commonAncestorContainer)) {
+        selectionRef.current = range;
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const restoreSelection = () => {
+    try {
+      const range = selectionRef.current;
+      const editor = editorRef.current;
+      if (!range || !editor) return;
+      const sel = window.getSelection();
+      if (!sel) return;
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch {
+      // ignore
+    }
+  };
+
+  const selectPage = (workspaceKey, pageId) => {
+    setState((prev) => ({
+      ...prev,
+      selected: { workspace: workspaceKey, pageId },
+    }));
+  };
+
+  const addPage = (workspaceKey) => {
+    const newId = uid();
+    const newPage = {
+      id: newId,
+      title: 'Untitled',
+      contentHtml: '<p></p>',
+      updatedAt: nowIso(),
+    };
+    setState((prev) => ({
+      ...prev,
+      selected: { workspace: workspaceKey, pageId: newId },
+      workspaces: {
+        ...prev.workspaces,
+        [workspaceKey]: [newPage, ...(prev.workspaces[workspaceKey] || [])],
+      },
+    }));
+  };
+
+  const deletePage = (workspaceKey, pageId) => {
+    setState((prev) => {
+      const list = prev.workspaces[workspaceKey] || [];
+      const nextList = list.filter((p) => p.id !== pageId);
+      const isDeletingSelected = prev.selected.workspace === workspaceKey && prev.selected.pageId === pageId;
+
+      let nextSelected = prev.selected;
+      if (isDeletingSelected) {
+        const fallback = nextList[0] || null;
+        if (fallback) {
+          nextSelected = { workspace: workspaceKey, pageId: fallback.id };
+        } else {
+          // if workspace becomes empty, switch to the other workspace if possible
+          const otherKey = workspaceKey === 'team' ? 'personal' : 'team';
+          const otherList = prev.workspaces[otherKey] || [];
+          if (otherList[0]) {
+            nextSelected = { workspace: otherKey, pageId: otherList[0].id };
+          } else {
+            // both empty; create one personal page
+            const createdId = uid();
+            const created = { id: createdId, title: 'Untitled', content: '', updatedAt: nowIso() };
+            return {
+              ...prev,
+              selected: { workspace: 'personal', pageId: createdId },
+              workspaces: { ...prev.workspaces, [workspaceKey]: nextList, personal: [created] },
+            };
+          }
+        }
+      }
+
+      return {
+        ...prev,
+        selected: nextSelected,
+        workspaces: { ...prev.workspaces, [workspaceKey]: nextList },
+      };
+    });
+  };
+
+  const updateSelected = (patch) => {
+    setState((prev) => {
+      const w = prev.selected.workspace;
+      const id = prev.selected.pageId;
+      const list = prev.workspaces[w] || [];
+      const nextList = list.map((p) => (p.id === id ? { ...p, ...patch, updatedAt: nowIso() } : p));
+      return { ...prev, workspaces: { ...prev.workspaces, [w]: nextList } };
+    });
+  };
+
+  const exec = (command, value = null) => {
+    // contentEditable formatting. (document.execCommand is deprecated but still works well for this lightweight editor)
+    try {
+      editorRef.current?.focus();
+      restoreSelection();
+      // eslint-disable-next-line deprecation/deprecation
+      document.execCommand(command, false, value);
+      // Persist updated HTML
+      if (editorRef.current) {
+        updateSelected({ contentHtml: editorRef.current.innerHTML });
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const findClosest = (node, predicate) => {
+    let cur = node;
+    while (cur) {
+      if (predicate(cur)) return cur;
+      cur = cur.parentNode;
+    }
+    return null;
+  };
+
+  const handleEditorKeyDown = (e) => {
+    // Keyboard indentation controls:
+    // - Tab => indent
+    // - Shift+Tab => outdent
+    // - Backspace on empty list item => outdent (so it "removes indent"/exits list)
+    if (!editorRef.current) return;
+
+    // Save selection early so toolbar / commands can restore it later
+    saveSelection();
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      exec(e.shiftKey ? 'outdent' : 'indent');
+      return;
+    }
+
+    if (e.key === 'Backspace') {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      if (!sel.isCollapsed) return;
+
+      const range = sel.getRangeAt(0);
+      const startNode = range.startContainer;
+
+      // If we are inside an LI and it's empty, outdent (or remove list level)
+      const li = findClosest(startNode, (n) => n?.nodeName === 'LI');
+      if (li && editorRef.current.contains(li)) {
+        const text = (li.textContent || '').replace(/\u200B/g, '').trim();
+        const hasMedia = li.querySelector && li.querySelector('img, video, audio');
+        const isEmpty = text.length === 0 && !hasMedia;
+
+        // Also consider caret at the very start of the LI
+        const atStart =
+          (range.startOffset === 0) ||
+          (startNode.nodeType === Node.ELEMENT_NODE && range.startOffset === 0);
+
+        if (isEmpty || atStart) {
+          // Prevent browser from removing the whole list unexpectedly; instead outdent one level.
+          e.preventDefault();
+          exec('outdent');
+          return;
+        }
+      }
+    }
+  };
+
+  const clearImageSelection = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const selected = editor.querySelectorAll('.cb-image-block.cb-selected');
+    selected.forEach((el) => el.classList.remove('cb-selected'));
+  };
+
+  const selectImageBlock = (blockEl) => {
+    if (!blockEl) return;
+    clearImageSelection();
+    blockEl.classList.add('cb-selected');
+  };
+
+  const insertHtmlAtSelection = (html) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    restoreSelection();
+
+    let range = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0) : null;
+    // If the file picker was opened, selection is often lost; fall back to end-of-editor insertion.
+    if (!range || !editor.contains(range.startContainer)) {
+      range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      selectionRef.current = range;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    const node = wrapper.firstChild;
+    if (!node) return;
+
+    range.deleteContents();
+    range.insertNode(node);
+
+    // Move caret after inserted node
+    const after = document.createRange();
+    after.setStartAfter(node);
+    after.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(after);
+    selectionRef.current = after;
+
+    updateSelected({ contentHtml: editor.innerHTML });
+  };
+
+  const insertImageBlock = (src) => {
+    const id = uid();
+    // contenteditable=false so it behaves like a block (drag/resize without editing inside)
+    const html = `
+      <div class="cb-image-block" data-cb-id="${id}" contenteditable="false" draggable="true">
+        <img src="${src}" alt="Inserted image" />
+      </div>
+      <p></p>
+    `;
+    insertHtmlAtSelection(html);
+  };
+
+  const promptImageUrl = () => {
+    const url = window.prompt('Image URL');
+    if (!url) return;
+    insertImageBlock(url);
+  };
+
+  const promptLink = () => {
+    const url = window.prompt('Link URL');
+    if (!url) return;
+    exec('createLink', url);
+  };
+
+  const chooseImageFile = () => {
+    // Preserve cursor position before opening OS file picker.
+    saveSelection();
+    fileInputRef.current?.click();
+  };
+
+  const onImageFile = async (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      insertImageBlock(String(dataUrl));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const getCaretRangeFromPoint = (x, y) => {
+    // Cross-browser caret position lookup
+    // eslint-disable-next-line deprecation/deprecation
+    if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
+    // Safari
+    // eslint-disable-next-line deprecation/deprecation
+    if (document.caretPositionFromPoint) {
+      // eslint-disable-next-line deprecation/deprecation
+      const pos = document.caretPositionFromPoint(x, y);
+      if (!pos) return null;
+      const r = document.createRange();
+      r.setStart(pos.offsetNode, pos.offset);
+      r.collapse(true);
+      return r;
+    }
+    return null;
+  };
+
+  const handleEditorClick = (e) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const target = e.target;
+    const block = target?.closest?.('.cb-image-block');
+    if (block && editor.contains(block)) {
+      selectImageBlock(block);
+    } else {
+      clearImageSelection();
+    }
+  };
+
+  const handleDragStart = (e) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const target = e.target;
+    const block = target?.closest?.('.cb-image-block');
+    if (!block || !editor.contains(block)) return;
+
+    const id = block.getAttribute('data-cb-id');
+    draggedImageIdRef.current = id;
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', id || '');
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleDragOver = (e) => {
+    // Allow dropping inside editor
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const id = (e.dataTransfer?.getData?.('text/plain') || '').trim() || draggedImageIdRef.current;
+    if (!id) return;
+
+    const block = editor.querySelector(`.cb-image-block[data-cb-id="${CSS.escape(id)}"]`);
+    if (!block) return;
+
+    // Figure out where to insert based on caret position
+    const range = getCaretRangeFromPoint(e.clientX, e.clientY);
+    if (!range) return;
+
+    // Only allow drop inside editor
+    if (!editor.contains(range.startContainer)) return;
+
+    // Move the block
+    block.remove();
+    range.insertNode(block);
+
+    // Put a paragraph after so user can type below
+    const p = document.createElement('p');
+    p.innerHTML = '<br/>';
+    block.after(p);
+
+    // Persist
+    updateSelected({ contentHtml: editor.innerHTML });
+  };
+
+  const handleEditorMouseUp = () => {
+    // Resizing the cb-image-block does not fire input events.
+    // Persist editor HTML on mouseup (covers resize end).
+    const editor = editorRef.current;
+    if (!editor) return;
+    updateSelected({ contentHtml: editor.innerHTML });
+  };
+
+  return (
+    <div
+      className="w-full flex-1 min-h-0 flex flex-col"
+      style={{
+        opacity: isVisible ? 1 : 0,
+        transform: isVisible ? 'translateX(0px)' : 'translateX(14px)',
+        transition: 'opacity 220ms ease, transform 220ms ease',
+      }}
+    >
+      <div className="flex w-full flex-1 min-h-0 gap-6 items-stretch">
+        {/* Sidebar */}
+        <aside
+          className="shrink-0 rounded-2xl p-4 min-h-0 overflow-auto"
+          style={{
+            width: 340,
+            background: 'var(--color-surface-dark)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          <SidebarSection
+            icon={Users}
+            title="TEAM WORKSPACE"
+            workspaceKey="team"
+            pages={state.workspaces.team}
+            selectedPageId={state.selected.workspace === 'team' ? state.selected.pageId : null}
+            onSelect={selectPage}
+            onAdd={addPage}
+            onDelete={deletePage}
+          />
+          <SidebarSection
+            icon={User}
+            title="PERSONAL WORKSPACE"
+            workspaceKey="personal"
+            pages={state.workspaces.personal}
+            selectedPageId={state.selected.workspace === 'personal' ? state.selected.pageId : null}
+            onSelect={selectPage}
+            onAdd={addPage}
+            onDelete={deletePage}
+          />
+        </aside>
+
+        {/* Editor */}
+        <section
+          className="min-w-0 flex-1 rounded-2xl p-6 min-h-0 flex flex-col"
+          style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          {!selectedPage ? (
+            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              Select a page to begin.
+            </div>
+          ) : (
+            <div className="flex flex-1 min-h-0 flex-col">
+              <input
+                value={selectedPage.title}
+                onChange={(e) => updateSelected({ title: e.target.value })}
+                placeholder="Untitled"
+                className="w-full bg-transparent text-2xl font-semibold outline-none"
+                style={{ color: 'var(--color-text-primary)' }}
+              />
+
+              {/* Toolbar */}
+              <div
+                className="mt-4 flex flex-wrap items-center gap-2 rounded-xl p-2"
+                style={{
+                  background: 'var(--color-surface-dark)',
+                  border: '1px solid var(--color-border)',
+                }}
+              >
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('bold')}
+                  title="Bold"
+                >
+                  <Bold size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('italic')}
+                  title="Italic"
+                >
+                  <Italic size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('underline')}
+                  title="Underline"
+                >
+                  <Underline size={16} />
+                </button>
+                <div className="mx-1 h-6 w-px" style={{ background: 'var(--color-border)' }} />
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('justifyLeft')}
+                  title="Align left"
+                >
+                  <AlignLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('justifyCenter')}
+                  title="Align center"
+                >
+                  <AlignCenter size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('justifyRight')}
+                  title="Align right"
+                >
+                  <AlignRight size={16} />
+                </button>
+                <div className="mx-1 h-6 w-px" style={{ background: 'var(--color-border)' }} />
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('insertUnorderedList')}
+                  title="Bulleted list"
+                >
+                  <List size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('insertOrderedList')}
+                  title="Numbered list"
+                >
+                  <ListOrdered size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('indent')}
+                  title="Indent"
+                >
+                  <Indent size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('outdent')}
+                  title="Outdent"
+                >
+                  <Outdent size={16} />
+                </button>
+                <div className="mx-1 h-6 w-px" style={{ background: 'var(--color-border)' }} />
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('formatBlock', '<h1>')}
+                  title="Heading 1 (H1)"
+                >
+                  <Type size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg px-3 py-2 text-xs font-semibold"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('formatBlock', '<h2>')}
+                  title="Heading 2 (H2)"
+                >
+                  H2
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg px-3 py-2 text-xs font-semibold"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('formatBlock', 'P')}
+                  title="Normal text"
+                >
+                  Normal
+                </button>
+                <div className="mx-1 h-6 w-px" style={{ background: 'var(--color-border)' }} />
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={promptLink}
+                  title="Insert link"
+                >
+                  <LinkIcon size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg p-2"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={promptImageUrl}
+                  title="Insert image by URL"
+                >
+                  <ImageIcon size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg px-3 py-2 text-xs font-semibold"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={chooseImageFile}
+                  title="Upload image"
+                >
+                  Upload
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => onImageFile(e.target.files?.[0])}
+                />
+              </div>
+
+              <div
+                ref={editorRef}
+                  className="mt-4 flex-1 min-h-0 overflow-auto rounded-xl p-4 text-sm outline-none rich-editor"
+                contentEditable
+                suppressContentEditableWarning
+                onInput={(e) => {
+                  updateSelected({ contentHtml: e.currentTarget.innerHTML });
+                }}
+                  onKeyDown={handleEditorKeyDown}
+                  onKeyUp={saveSelection}
+                  onMouseUp={() => {
+                    saveSelection();
+                    handleEditorMouseUp();
+                  }}
+                  onFocus={saveSelection}
+                onBlur={(e) => {
+                  updateSelected({ contentHtml: e.currentTarget.innerHTML });
+                }}
+                  onClick={handleEditorClick}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                style={{
+                  background: 'var(--color-surface-dark)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                  lineHeight: 1.6,
+                }}
+                role="textbox"
+                aria-label="Page content"
+              />
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+
