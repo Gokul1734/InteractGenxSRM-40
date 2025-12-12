@@ -48,10 +48,16 @@ const SessionSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  session_description: {
+    type: String,
+    required: [true, 'Session description is required'],
+    trim: true
+  },
   members: [SessionMemberSchema],
   created_by: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'User',
+    required: [true, 'Session must have a creator. Only existing users can create sessions.']
   },
   is_active: {
     type: Boolean,
@@ -168,17 +174,23 @@ SessionSchema.statics.generateSessionCode = async function() {
   return sessionCode;
 };
 
-// Static method to find or create session
-SessionSchema.statics.findOrCreateSession = async function(sessionCode, sessionName, creatorUser) {
+// Static method to find or create session (requires creator user for new sessions)
+SessionSchema.statics.findOrCreateSession = async function(sessionCode, sessionName, sessionDescription, creatorUser) {
   // Generate session code if not provided
   const code = sessionCode || await this.generateSessionCode();
   let session = await this.findOne({ session_code: code });
   
   if (!session) {
+    // Creator user is required for new sessions
+    if (!creatorUser || !creatorUser._id) {
+      throw new Error('Creator user is required to create a new session');
+    }
+    
     session = await this.create({
       session_code: code,
       session_name: sessionName || `Session ${code}`,
-      created_by: creatorUser ? creatorUser._id : null,
+      session_description: sessionDescription || `Tracking session ${code}`,
+      created_by: creatorUser._id,
       members: [],
       is_active: true
     });

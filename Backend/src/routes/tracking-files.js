@@ -13,7 +13,7 @@ const NavigationTracking = require('../models/NavigationTracking');
 router.post('/start', async (req, res) => {
   console.log('📥 START request received:', req.body);
   try {
-    const { user_code, session_code, user_name, user_email, session_name } = req.body;
+    const { user_code, session_code, user_name, user_email, session_name, session_description } = req.body;
 
     if (!user_code || !session_code) {
       return res.status(400).json({
@@ -43,6 +43,7 @@ router.post('/start', async (req, res) => {
     const session = await Session.findOrCreateSession(
       session_code,
       session_name || `Session ${session_code}`,
+      session_description || `Tracking session ${session_code}`,
       user
     );
 

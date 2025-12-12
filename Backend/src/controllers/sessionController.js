@@ -5,29 +5,52 @@ const NavigationTracking = require('../models/NavigationTracking');
 /**
  * @desc    Create a new session
  * @route   POST /api/sessions
- * @access  Public
+ * @access  Public (requires valid user_code)
  */
 const createSession = async (req, res) => {
   try {
-    const { session_name, created_by_user_code } = req.body;
+    const { session_name, session_description, created_by_user_code } = req.body;
+
+    // Validation - created_by_user_code is required
+    if (!created_by_user_code || created_by_user_code.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide created_by_user_code. Only existing users can create sessions.'
+      });
+    }
+
+    // Validation - session_description is required
+    if (!session_description || session_description.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide session_description'
+      });
+    }
+
+    // Verify the user exists
+    const creatorUser = await User.findOne({ user_code: created_by_user_code.toUpperCase() });
+    if (!creatorUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found. Only existing users can create sessions. Please register first.'
+      });
+    }
 
     // Auto-generate unique session_code with 'S' suffix (format: XXXXXXS)
     const session_code = await Session.generateSessionCode();
 
-    // Get creator user if provided
-    let creatorUser = null;
-    if (created_by_user_code) {
-      creatorUser = await User.findOne({ user_code: created_by_user_code.toUpperCase() });
-    }
-
-    // Create session
+    // Create session with creator's ObjectId
     const session = await Session.create({
       session_code,
       session_name: session_name || `Session ${session_code}`,
-      created_by: creatorUser?._id || null,
+      session_description: session_description.trim(),
+      created_by: creatorUser._id,
       members: [],
       is_active: true
     });
+
+    // Populate created_by for response
+    await session.populate('created_by', 'user_name user_code user_email');
 
     res.status(201).json({
       success: true,
@@ -174,7 +197,7 @@ const getSessionById = async (req, res) => {
 const updateSession = async (req, res) => {
   try {
     const { session_code } = req.params;
-    const { session_name, is_active } = req.body;
+    const { session_name, session_description, is_active } = req.body;
 
     const session = await Session.findOne({ session_code });
 
@@ -187,6 +210,7 @@ const updateSession = async (req, res) => {
 
     // Update fields
     if (session_name) session.session_name = session_name;
+    if (session_description) session.session_description = session_description.trim();
     if (typeof is_active === 'boolean') session.is_active = is_active;
 
     await session.save();
