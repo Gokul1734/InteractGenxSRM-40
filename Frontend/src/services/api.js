@@ -269,13 +269,14 @@ export const trackingAPI = {
     });
   },
 
-  // Stop tracking
-  stop: async (userCode, sessionCode) => {
+  // Stop tracking (user-specific - only stops recording for this user)
+  stop: async (userCode, sessionCode, userId = null) => {
     return apiRequest('/tracking-files/stop', {
       method: 'POST',
       body: JSON.stringify({
         user_code: userCode,
         session_code: sessionCode,
+        ...(userId && { user_id: userId }), // Include user_id if provided for additional specificity
       }),
     });
   },
