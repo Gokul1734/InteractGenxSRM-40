@@ -8,22 +8,13 @@ const Session = require('../models/Session');
  */
 const createUser = async (req, res) => {
   try {
-    const { user_name, user_email, user_code } = req.body;
+    const { user_name, user_email } = req.body;
 
     // Validation
-    if (!user_name || !user_email || !user_code) {
+    if (!user_name || !user_email) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide user_name, user_email, and user_code'
-      });
-    }
-
-    // Check if user_code already exists
-    const existingUserCode = await User.findOne({ user_code });
-    if (existingUserCode) {
-      return res.status(400).json({
-        success: false,
-        message: 'User code already exists'
+        message: 'Please provide user_name and user_email'
       });
     }
 
@@ -35,6 +26,9 @@ const createUser = async (req, res) => {
         message: 'Email already registered'
       });
     }
+
+    // Auto-generate unique user_code with 'U' suffix (format: XXXXXXU)
+    const user_code = await User.generateUserCode();
 
     // Create user
     const user = await User.create({
@@ -101,16 +95,15 @@ const getAllUsers = async (req, res) => {
 const getUserByCode = async (req, res) => {
   try {
     const { user_code } = req.params;
-    const userCodeNum = parseInt(user_code);
 
-    if (isNaN(userCodeNum)) {
+    if (!user_code || user_code.trim() === '') {
       return res.status(400).json({
         success: false,
         message: 'Invalid user code format'
       });
     }
 
-    const user = await User.findOne({ user_code: userCodeNum }).select('-__v');
+    const user = await User.findOne({ user_code: user_code.toUpperCase() }).select('-__v');
 
     if (!user) {
       return res.status(404).json({
@@ -176,16 +169,15 @@ const updateUser = async (req, res) => {
   try {
     const { user_code } = req.params;
     const { user_name, user_email, is_active } = req.body;
-    const userCodeNum = parseInt(user_code);
 
-    if (isNaN(userCodeNum)) {
+    if (!user_code || user_code.trim() === '') {
       return res.status(400).json({
         success: false,
         message: 'Invalid user code format'
       });
     }
 
-    const user = await User.findOne({ user_code: userCodeNum });
+    const user = await User.findOne({ user_code: user_code.toUpperCase() });
 
     if (!user) {
       return res.status(404).json({
@@ -239,16 +231,15 @@ const updateUser = async (req, res) => {
 const deleteUser = async (req, res) => {
   try {
     const { user_code } = req.params;
-    const userCodeNum = parseInt(user_code);
 
-    if (isNaN(userCodeNum)) {
+    if (!user_code || user_code.trim() === '') {
       return res.status(400).json({
         success: false,
         message: 'Invalid user code format'
       });
     }
 
-    const user = await User.findOneAndDelete({ user_code: userCodeNum });
+    const user = await User.findOneAndDelete({ user_code: user_code.toUpperCase() });
 
     if (!user) {
       return res.status(404).json({
@@ -260,7 +251,7 @@ const deleteUser = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'User deleted successfully',
-      data: { user_code: userCodeNum }
+      data: { user_code: user_code.toUpperCase() }
     });
 
   } catch (error) {
@@ -281,9 +272,8 @@ const deleteUser = async (req, res) => {
 const getUserSessions = async (req, res) => {
   try {
     const { user_code } = req.params;
-    const userCodeNum = parseInt(user_code);
 
-    if (isNaN(userCodeNum)) {
+    if (!user_code || user_code.trim() === '') {
       return res.status(400).json({
         success: false,
         message: 'Invalid user code format'
@@ -292,7 +282,7 @@ const getUserSessions = async (req, res) => {
 
     // Find all sessions where user is a member
     const sessions = await Session.find({
-      'members.user_code': userCodeNum
+      'members.user_code': user_code.toUpperCase()
     }).select('-__v');
 
     res.status(200).json({
@@ -319,17 +309,16 @@ const getUserSessions = async (req, res) => {
 const validateUserCode = async (req, res) => {
   try {
     const { user_code } = req.params;
-    const userCodeNum = parseInt(user_code);
 
-    if (isNaN(userCodeNum)) {
+    if (!user_code || user_code.trim() === '') {
       return res.status(400).json({
         success: false,
         valid: false,
-        message: 'Invalid user code format. Must be a number.'
+        message: 'Invalid user code format.'
       });
     }
 
-    const user = await User.findOne({ user_code: userCodeNum });
+    const user = await User.findOne({ user_code: user_code.toUpperCase() });
 
     if (!user) {
       return res.status(404).json({

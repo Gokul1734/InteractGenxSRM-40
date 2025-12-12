@@ -8,8 +8,9 @@ const SessionMemberSchema = new mongoose.Schema({
     required: true
   },
   user_code: {
-    type: Number,
-    required: true
+    type: String,
+    required: true,
+    uppercase: true
   },
   user_name: {
     type: String,
@@ -145,14 +146,38 @@ SessionSchema.methods.endSession = function() {
   return this.save();
 };
 
+/**
+ * Generate a unique session code with format: XXXXXXS (6 random digits + S suffix)
+ */
+SessionSchema.statics.generateSessionCode = async function() {
+  let sessionCode;
+  let isUnique = false;
+  
+  while (!isUnique) {
+    // Generate 6 random digits
+    const randomDigits = Math.floor(100000 + Math.random() * 900000);
+    sessionCode = `${randomDigits}S`;
+    
+    // Check if code already exists
+    const existing = await this.findOne({ session_code: sessionCode });
+    if (!existing) {
+      isUnique = true;
+    }
+  }
+  
+  return sessionCode;
+};
+
 // Static method to find or create session
 SessionSchema.statics.findOrCreateSession = async function(sessionCode, sessionName, creatorUser) {
-  let session = await this.findOne({ session_code: sessionCode });
+  // Generate session code if not provided
+  const code = sessionCode || await this.generateSessionCode();
+  let session = await this.findOne({ session_code: code });
   
   if (!session) {
     session = await this.create({
-      session_code: sessionCode,
-      session_name: sessionName || `Session ${sessionCode}`,
+      session_code: code,
+      session_name: sessionName || `Session ${code}`,
       created_by: creatorUser ? creatorUser._id : null,
       members: [],
       is_active: true

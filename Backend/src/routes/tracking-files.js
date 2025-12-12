@@ -30,10 +30,13 @@ router.post('/start', async (req, res) => {
       });
     }
 
+    // Normalize user_code to uppercase
+    const normalizedUserCode = typeof user_code === 'string' ? user_code.toUpperCase() : user_code;
+
     // Create or find user (if user info provided)
     let user = null;
     if (user_name && user_email) {
-      user = await User.findOrCreateUser({ user_code, user_name, user_email });
+      user = await User.findOrCreateUser({ user_code: normalizedUserCode, user_name, user_email });
     }
 
     // Create or find collaborative session
@@ -45,7 +48,7 @@ router.post('/start', async (req, res) => {
 
     // Create navigation tracking record for this user in this session
     const tracking = await NavigationTracking.findOrCreateSession(
-      user_code,
+      normalizedUserCode,
       session_code,
       user?._id,
       session._id
@@ -95,6 +98,9 @@ router.post('/update', async (req, res) => {
       });
     }
 
+    // Normalize user_code to uppercase
+    const normalizedUserCode = typeof user_code === 'string' ? user_code.toUpperCase() : user_code;
+
     // Check MongoDB connection
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({
@@ -105,7 +111,7 @@ router.post('/update', async (req, res) => {
 
     // Find or create tracking record
     let tracking = await NavigationTracking.findOne({
-      user_code,
+      user_code: normalizedUserCode,
       session_code,
       is_active: true
     });
@@ -113,12 +119,12 @@ router.post('/update', async (req, res) => {
     let isNewTracking = false;
     if (!tracking) {
       // Find user and session for linking
-      const user = await User.findOne({ user_code });
+      const user = await User.findOne({ user_code: normalizedUserCode });
       const session = await Session.findOne({ session_code });
 
       // Create new tracking if doesn't exist
       tracking = await NavigationTracking.create({
-        user_code,
+        user_code: normalizedUserCode,
         session_code,
         user: user?._id || null,
         session: session?._id || null,
@@ -130,7 +136,7 @@ router.post('/update', async (req, res) => {
 
       // Link tracking to session member if both user and session exist
       if (user && session) {
-        await session.updateMemberTracking(user_code, tracking._id);
+        await session.updateMemberTracking(normalizedUserCode, tracking._id);
       }
     }
 
@@ -180,8 +186,11 @@ router.post('/stop', async (req, res) => {
       });
     }
 
+    // Normalize user_code to uppercase
+    const normalizedUserCode = typeof user_code === 'string' ? user_code.toUpperCase() : user_code;
+
     const tracking = await NavigationTracking.findOne({
-      user_code,
+      user_code: normalizedUserCode,
       session_code,
       is_active: true
     });
@@ -225,7 +234,7 @@ router.get('/session/:user_code/:session_code', async (req, res) => {
     const { user_code, session_code } = req.params;
 
     const tracking = await NavigationTracking.findOne({
-      user_code: parseInt(user_code),
+      user_code: user_code.toUpperCase(),
       session_code
     }).populate('user').populate('session');
 
@@ -397,7 +406,7 @@ router.delete('/session/:user_code/:session_code', async (req, res) => {
     const { user_code, session_code } = req.params;
 
     await NavigationTracking.deleteOne({
-      user_code: parseInt(user_code),
+      user_code: user_code.toUpperCase(),
       session_code
     });
 
@@ -498,13 +507,12 @@ router.get('/validate/user/:user_code', async (req, res) => {
   console.log('📥 VALIDATE USER request received:', req.params.user_code);
   try {
     const { user_code } = req.params;
-    const userCodeNum = parseInt(user_code);
 
-    if (isNaN(userCodeNum)) {
+    if (!user_code || user_code.trim() === '') {
       return res.status(400).json({
         success: false,
         valid: false,
-        message: 'Invalid user code format. Must be a number.'
+        message: 'Invalid user code format.'
       });
     }
 
@@ -517,7 +525,7 @@ router.get('/validate/user/:user_code', async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ user_code: userCodeNum });
+    const user = await User.findOne({ user_code: user_code.toUpperCase() });
 
     if (!user) {
       return res.status(404).json({
@@ -614,7 +622,6 @@ router.get('/validate/:user_code/:session_code', async (req, res) => {
   console.log('📥 VALIDATE BOTH request received:', req.params.user_code, req.params.session_code);
   try {
     const { user_code, session_code } = req.params;
-    const userCodeNum = parseInt(user_code);
 
     // Check MongoDB connection
     if (mongoose.connection.readyState !== 1) {
@@ -630,10 +637,10 @@ router.get('/validate/:user_code/:session_code', async (req, res) => {
     let session = null;
 
     // Validate user code
-    if (isNaN(userCodeNum)) {
-      errors.push('Invalid user code format. Must be a number.');
+    if (!user_code || user_code.trim() === '') {
+      errors.push('Invalid user code format.');
     } else {
-      user = await User.findOne({ user_code: userCodeNum });
+      user = await User.findOne({ user_code: user_code.toUpperCase() });
       if (!user) {
         errors.push('User code not found. Please register on the dashboard first.');
       }

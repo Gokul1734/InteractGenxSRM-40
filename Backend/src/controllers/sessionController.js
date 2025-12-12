@@ -9,29 +9,15 @@ const NavigationTracking = require('../models/NavigationTracking');
  */
 const createSession = async (req, res) => {
   try {
-    const { session_code, session_name, created_by_user_code } = req.body;
+    const { session_name, created_by_user_code } = req.body;
 
-    // Validation
-    if (!session_code) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide a session_code'
-      });
-    }
-
-    // Check if session_code already exists
-    const existingSession = await Session.findOne({ session_code });
-    if (existingSession) {
-      return res.status(400).json({
-        success: false,
-        message: 'Session code already exists'
-      });
-    }
+    // Auto-generate unique session_code with 'S' suffix (format: XXXXXXS)
+    const session_code = await Session.generateSessionCode();
 
     // Get creator user if provided
     let creatorUser = null;
     if (created_by_user_code) {
-      creatorUser = await User.findOne({ user_code: created_by_user_code });
+      creatorUser = await User.findOne({ user_code: created_by_user_code.toUpperCase() });
     }
 
     // Create session
@@ -268,18 +254,10 @@ const addUserToSession = async (req, res) => {
     const { session_code } = req.params;
     const { user_code } = req.body;
 
-    if (!user_code) {
+    if (!user_code || user_code.trim() === '') {
       return res.status(400).json({
         success: false,
         message: 'Please provide user_code'
-      });
-    }
-
-    const userCodeNum = parseInt(user_code);
-    if (isNaN(userCodeNum)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid user code format'
       });
     }
 
@@ -293,7 +271,7 @@ const addUserToSession = async (req, res) => {
     }
 
     // Find user
-    const user = await User.findOne({ user_code: userCodeNum });
+    const user = await User.findOne({ user_code: user_code.toUpperCase() });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -309,7 +287,7 @@ const addUserToSession = async (req, res) => {
       message: 'User added to session successfully',
       data: {
         session_code,
-        user_code: userCodeNum,
+        user_code: user.user_code,
         user_name: user.user_name,
         member_count: session.members.length
       }
@@ -333,9 +311,8 @@ const addUserToSession = async (req, res) => {
 const removeUserFromSession = async (req, res) => {
   try {
     const { session_code, user_code } = req.params;
-    const userCodeNum = parseInt(user_code);
 
-    if (isNaN(userCodeNum)) {
+    if (!user_code || user_code.trim() === '') {
       return res.status(400).json({
         success: false,
         message: 'Invalid user code format'
@@ -352,14 +329,14 @@ const removeUserFromSession = async (req, res) => {
     }
 
     // Remove user from session (marks as inactive)
-    await session.removeMember(userCodeNum);
+    await session.removeMember(user_code.toUpperCase());
 
     res.status(200).json({
       success: true,
       message: 'User removed from session successfully',
       data: {
         session_code,
-        user_code: userCodeNum
+        user_code: user_code.toUpperCase()
       }
     });
 
