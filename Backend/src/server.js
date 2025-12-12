@@ -8,6 +8,8 @@ const connectDB = require('./config/db');
 const authRoutes = require('./routes/auth');
 const postsRoutes = require('./routes/posts');
 const trackingFilesRoutes = require('./routes/tracking-files');
+const usersRoutes = require('./routes/users');
+const sessionsRoutes = require('./routes/sessions');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -37,6 +39,8 @@ if (process.env.NODE_ENV === 'development') app.use(morgan('dev'));
 app.use('/api/auth', authRoutes);
 app.use('/api/posts', postsRoutes);
 app.use('/api/tracking-files', trackingFilesRoutes);
+app.use('/api/users', usersRoutes);
+app.use('/api/sessions', sessionsRoutes);
 
 // Health check
 app.get('/', (req, res) => res.send({ ok: true }));

@@ -221,6 +221,7 @@ function App() {
                 <h1 className="text-3xl font-bold text-gray-800">Co-Browsing Dashboard</h1>
                 <p className="text-gray-600">Real-time view-only session sharing</p>
               </div>
+
             </div>
             <div className="flex items-center gap-4">
               <div className="text-right">
@@ -288,3 +289,4 @@ function App() {
 }
 
 export default App;
+

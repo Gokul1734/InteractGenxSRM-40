@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-// Schema for session members (embedded user info with join time)
+// Schema for session members (embedded user info with join time and navigation tracking)
 const SessionMemberSchema = new mongoose.Schema({
   user: {
     type: mongoose.Schema.Types.ObjectId,
@@ -14,6 +14,11 @@ const SessionMemberSchema = new mongoose.Schema({
   user_name: {
     type: String,
     required: true
+  },
+  navigation_tracking: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'NavigationTracking',
+    default: null
   },
   joined_at: {
     type: Date,
@@ -74,7 +79,7 @@ SessionSchema.virtual('member_count').get(function() {
 });
 
 // Method to add a member to session
-SessionSchema.methods.addMember = async function(user) {
+SessionSchema.methods.addMember = async function(user, navigationTrackingId = null) {
   // Check if user is already a member
   const existingMember = this.members.find(m => m.user_code === user.user_code);
   
@@ -82,17 +87,34 @@ SessionSchema.methods.addMember = async function(user) {
     // Reactivate if previously left
     existingMember.is_active = true;
     existingMember.left_at = null;
+    // Update navigation tracking reference if provided
+    if (navigationTrackingId) {
+      existingMember.navigation_tracking = navigationTrackingId;
+    }
   } else {
     this.members.push({
       user: user._id,
       user_code: user.user_code,
       user_name: user.user_name,
+      navigation_tracking: navigationTrackingId,
       joined_at: new Date(),
       is_active: true
     });
   }
   
   return this.save();
+};
+
+// Method to update member's navigation tracking reference
+SessionSchema.methods.updateMemberTracking = async function(userCode, navigationTrackingId) {
+  const member = this.members.find(m => m.user_code === userCode);
+  
+  if (member) {
+    member.navigation_tracking = navigationTrackingId;
+    return this.save();
+  }
+  
+  return null;
 };
 
 // Method to remove a member from session
@@ -199,10 +221,11 @@ SessionSchema.statics.getCollaborativeData = async function(sessionCode) {
   };
 };
 
-// Static method to get session with populated members
+// Static method to get session with populated members and their navigation tracking
 SessionSchema.statics.getSessionWithMembers = function(sessionCode) {
   return this.findOne({ session_code: sessionCode })
     .populate('members.user')
+    .populate('members.navigation_tracking')
     .populate('created_by');
 };
 

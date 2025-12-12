@@ -1,5 +1,9 @@
 // Popup UI Controller for Browser Navigation Tracker
 
+// Backend Configuration
+const API_BASE_URL = 'http://localhost:5000/api/tracking-files';
+const DASHBOARD_URL = 'http://localhost:5173';
+
 // DOM Elements
 const userCodeInput = document.getElementById('userCode');
 const sessionCodeInput = document.getElementById('sessionCode');
@@ -12,10 +16,25 @@ const countNumber = document.getElementById('countNumber');
 const inputSection = document.getElementById('inputSection');
 const autoSaveInfo = document.getElementById('autoSaveInfo');
 const filenameDisplay = document.getElementById('filename');
+const validationError = document.getElementById('validationError');
+const errorMessage = document.getElementById('errorMessage');
+const dashboardLink = document.getElementById('dashboardLink');
 
 // Initialize popup state
 document.addEventListener('DOMContentLoaded', async () => {
   await loadState();
+  
+  // Add click handler for dashboard button
+  if (dashboardLink) {
+    dashboardLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      openDashboard();
+    });
+  }
+  
+  // Hide validation error when user starts typing
+  userCodeInput.addEventListener('input', hideValidationError);
+  sessionCodeInput.addEventListener('input', hideValidationError);
 });
 
 // Load current recording state
@@ -47,6 +66,12 @@ async function loadState() {
 
 // Update UI based on recording state
 function updateUI(isRecording, count = 0) {
+  // Hide validation error when updating UI
+  hideValidationError();
+  
+  // Reset start button text
+  startBtn.textContent = 'Start Recording';
+  
   if (isRecording) {
     // Recording is ON
     statusDisplay.textContent = 'Recording: ON';
@@ -94,23 +119,86 @@ function updateUI(isRecording, count = 0) {
   }
 }
 
+// Validate user code and session code against backend
+async function validateCodes(userCode, sessionCode) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/validate/${userCode}/${sessionCode}`);
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Validation API error:', error);
+    return {
+      success: false,
+      valid: false,
+      message: 'Unable to connect to backend. Please ensure the server is running.',
+      errors: ['Backend connection failed']
+    };
+  }
+}
+
+// Show validation error with dashboard link
+function showValidationError(message) {
+  if (validationError) {
+    validationError.classList.remove('hidden');
+    if (errorMessage) {
+      errorMessage.textContent = message;
+    }
+    if (dashboardLink) {
+      dashboardLink.href = DASHBOARD_URL;
+    }
+  }
+}
+
+// Hide validation error
+function hideValidationError() {
+  if (validationError) {
+    validationError.classList.add('hidden');
+  }
+}
+
+// Open dashboard in new tab
+function openDashboard() {
+  chrome.tabs.create({ url: DASHBOARD_URL });
+}
+
 // Start Recording
 startBtn.addEventListener('click', async () => {
   const userCode = parseInt(userCodeInput.value);
   const sessionCode = sessionCodeInput.value.trim();
 
-  // Validation
+  // Hide any previous error
+  hideValidationError();
+
+  // Basic format validation
   if (!userCode || isNaN(userCode)) {
-    alert('Please enter a valid numeric User Code');
+    showValidationError('Please enter a valid numeric User Code');
     return;
   }
 
   if (!sessionCode) {
-    alert('Please enter a Session Code');
+    showValidationError('Please enter a Session Code');
     return;
   }
 
+  // Show loading state
+  startBtn.disabled = true;
+  startBtn.textContent = 'Validating...';
+
   try {
+    // Validate user and session codes against backend
+    const validationResult = await validateCodes(userCode, sessionCode);
+
+    if (!validationResult.valid) {
+      // Show error and prompt to navigate to dashboard
+      showValidationError(validationResult.message || 'Invalid user code or session code');
+      startBtn.disabled = false;
+      startBtn.textContent = 'Start Recording';
+      return;
+    }
+
+    // Validation passed - proceed with recording
+    console.log('Validation passed:', validationResult.data);
+
     // Save codes to storage
     await chrome.storage.local.set({
       user_code: userCode,
@@ -131,7 +219,9 @@ startBtn.addEventListener('click', async () => {
 
   } catch (error) {
     console.error('Error starting recording:', error);
-    alert('Failed to start recording');
+    showValidationError('Failed to start recording. Please try again.');
+    startBtn.disabled = false;
+    startBtn.textContent = 'Start Recording';
   }
 });
 

@@ -43,11 +43,6 @@ router.post('/start', async (req, res) => {
       user
     );
 
-    // Add user to session members if user exists
-    if (user) {
-      await session.addMember(user);
-    }
-
     // Create navigation tracking record for this user in this session
     const tracking = await NavigationTracking.findOrCreateSession(
       user_code,
@@ -55,6 +50,11 @@ router.post('/start', async (req, res) => {
       user?._id,
       session._id
     );
+
+    // Add user to session members with their navigation tracking reference
+    if (user) {
+      await session.addMember(user, tracking._id);
+    }
 
     console.log(`✓ Session started: ${user_code}_${session_code} (MongoDB)`);
 
@@ -110,15 +110,28 @@ router.post('/update', async (req, res) => {
       is_active: true
     });
 
+    let isNewTracking = false;
     if (!tracking) {
+      // Find user and session for linking
+      const user = await User.findOne({ user_code });
+      const session = await Session.findOne({ session_code });
+
       // Create new tracking if doesn't exist
       tracking = await NavigationTracking.create({
         user_code,
         session_code,
+        user: user?._id || null,
+        session: session?._id || null,
         recording_started_at: data.recording_started_at || new Date(),
         navigation_events: [],
         is_active: true
       });
+      isNewTracking = true;
+
+      // Link tracking to session member if both user and session exist
+      if (user && session) {
+        await session.updateMemberTracking(user_code, tracking._id);
+      }
     }
 
     // LIVE UPDATE: Replace navigation events with latest data
@@ -313,30 +326,54 @@ router.get('/sessions', async (req, res) => {
 });
 
 // @route   GET /api/tracking-files/sessions/:session_code/members
-// @desc    Get all members and their live status in a session
+// @desc    Get all members and their live status in a session (from Session model)
 // @access  Public
 router.get('/sessions/:session_code/members', async (req, res) => {
   try {
     const { session_code } = req.params;
 
-    const trackings = await NavigationTracking.find({ session_code })
-      .populate('user')
-      .sort({ recording_started_at: 1 });
+    // Get session with populated members and their navigation tracking
+    const session = await Session.getSessionWithMembers(session_code);
 
-    const members = trackings.map(t => ({
-      user_code: t.user_code,
-      user_name: t.user?.user_name || `User ${t.user_code}`,
-      is_active: t.is_active,
-      event_count: t.event_count,
-      last_event: t.navigation_events.length > 0 
-        ? t.navigation_events[t.navigation_events.length - 1] 
-        : null,
-      recording_started_at: t.recording_started_at
-    }));
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
+    }
+
+    const members = session.members.map(member => {
+      const tracking = member.navigation_tracking;
+      return {
+        user_id: member.user?._id || null,
+        user_code: member.user_code,
+        user_name: member.user_name,
+        is_active: member.is_active,
+        joined_at: member.joined_at,
+        left_at: member.left_at,
+        navigation_tracking: tracking ? {
+          tracking_id: tracking._id,
+          event_count: tracking.event_count || tracking.navigation_events?.length || 0,
+          is_recording: tracking.is_active,
+          recording_started_at: tracking.recording_started_at,
+          recording_ended_at: tracking.recording_ended_at,
+          navigation_events: tracking.navigation_events || [],
+          last_event: tracking.navigation_events?.length > 0 
+            ? tracking.navigation_events[tracking.navigation_events.length - 1] 
+            : null
+        } : null
+      };
+    });
 
     res.status(200).json({
       success: true,
       session_code,
+      session_id: session._id,
+      session_name: session.session_name,
+      is_active: session.is_active,
+      started_at: session.started_at,
+      ended_at: session.ended_at,
+      created_by: session.created_by,
       member_count: members.length,
       active_count: members.filter(m => m.is_active).length,
       members
@@ -376,6 +413,275 @@ router.delete('/session/:user_code/:session_code', async (req, res) => {
     console.error('Error deleting session:', error);
     res.status(500).json({
       success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/tracking-files/sessions/:session_code/full
+// @desc    Get complete session data with all members and their navigation tracking
+// @access  Public
+router.get('/sessions/:session_code/full', async (req, res) => {
+  try {
+    const { session_code } = req.params;
+
+    // Get session with populated members and their navigation tracking
+    const session = await Session.getSessionWithMembers(session_code);
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
+    }
+
+    // Build comprehensive session response with embedded navigation tracking
+    const sessionData = {
+      session_id: session._id,
+      session_code: session.session_code,
+      session_name: session.session_name,
+      is_active: session.is_active,
+      started_at: session.started_at,
+      ended_at: session.ended_at,
+      created_by: session.created_by ? {
+        user_id: session.created_by._id,
+        user_name: session.created_by.user_name,
+        user_code: session.created_by.user_code
+      } : null,
+      member_count: session.members.length,
+      active_member_count: session.members.filter(m => m.is_active).length,
+      members: session.members.map(member => {
+        const tracking = member.navigation_tracking;
+        return {
+          user_id: member.user?._id || null,
+          user_code: member.user_code,
+          user_name: member.user_name,
+          is_active: member.is_active,
+          joined_at: member.joined_at,
+          left_at: member.left_at,
+          navigation_tracking: tracking ? {
+            tracking_id: tracking._id,
+            event_count: tracking.event_count || tracking.navigation_events?.length || 0,
+            is_recording: tracking.is_active,
+            recording_started_at: tracking.recording_started_at,
+            recording_ended_at: tracking.recording_ended_at,
+            navigation_events: tracking.navigation_events || []
+          } : null
+        };
+      }),
+      total_events: session.members.reduce((total, member) => {
+        const tracking = member.navigation_tracking;
+        return total + (tracking?.navigation_events?.length || 0);
+      }, 0)
+    };
+
+    res.status(200).json({
+      success: true,
+      data: sessionData
+    });
+
+  } catch (error) {
+    console.error('Error fetching full session data:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/tracking-files/validate/user/:user_code
+// @desc    Validate if user code exists in the database
+// @access  Public
+router.get('/validate/user/:user_code', async (req, res) => {
+  console.log('📥 VALIDATE USER request received:', req.params.user_code);
+  try {
+    const { user_code } = req.params;
+    const userCodeNum = parseInt(user_code);
+
+    if (isNaN(userCodeNum)) {
+      return res.status(400).json({
+        success: false,
+        valid: false,
+        message: 'Invalid user code format. Must be a number.'
+      });
+    }
+
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        valid: false,
+        message: 'Database not connected'
+      });
+    }
+
+    const user = await User.findOne({ user_code: userCodeNum });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        valid: false,
+        message: 'User code not found. Please register on the dashboard first.'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      valid: true,
+      message: 'User code is valid',
+      data: {
+        user_code: user.user_code,
+        user_name: user.user_name,
+        is_active: user.is_active
+      }
+    });
+
+  } catch (error) {
+    console.error('Error validating user:', error);
+    res.status(500).json({
+      success: false,
+      valid: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/tracking-files/validate/session/:session_code
+// @desc    Validate if session code exists in the database
+// @access  Public
+router.get('/validate/session/:session_code', async (req, res) => {
+  console.log('📥 VALIDATE SESSION request received:', req.params.session_code);
+  try {
+    const { session_code } = req.params;
+
+    if (!session_code || session_code.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        valid: false,
+        message: 'Invalid session code format'
+      });
+    }
+
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        valid: false,
+        message: 'Database not connected'
+      });
+    }
+
+    const session = await Session.findOne({ session_code: session_code.trim() });
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        valid: false,
+        message: 'Session code not found. Please create a session on the dashboard first.'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      valid: true,
+      message: 'Session code is valid',
+      data: {
+        session_code: session.session_code,
+        session_name: session.session_name,
+        is_active: session.is_active,
+        member_count: session.members.filter(m => m.is_active).length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error validating session:', error);
+    res.status(500).json({
+      success: false,
+      valid: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/tracking-files/validate/:user_code/:session_code
+// @desc    Validate both user code and session code in one request
+// @access  Public
+router.get('/validate/:user_code/:session_code', async (req, res) => {
+  console.log('📥 VALIDATE BOTH request received:', req.params.user_code, req.params.session_code);
+  try {
+    const { user_code, session_code } = req.params;
+    const userCodeNum = parseInt(user_code);
+
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        valid: false,
+        message: 'Database not connected'
+      });
+    }
+
+    const errors = [];
+    let user = null;
+    let session = null;
+
+    // Validate user code
+    if (isNaN(userCodeNum)) {
+      errors.push('Invalid user code format. Must be a number.');
+    } else {
+      user = await User.findOne({ user_code: userCodeNum });
+      if (!user) {
+        errors.push('User code not found. Please register on the dashboard first.');
+      }
+    }
+
+    // Validate session code
+    if (!session_code || session_code.trim() === '') {
+      errors.push('Invalid session code format.');
+    } else {
+      session = await Session.findOne({ session_code: session_code.trim() });
+      if (!session) {
+        errors.push('Session code not found. Please create a session on the dashboard first.');
+      }
+    }
+
+    if (errors.length > 0) {
+      return res.status(404).json({
+        success: false,
+        valid: false,
+        message: errors.join(' '),
+        errors: errors
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      valid: true,
+      message: 'Both user code and session code are valid',
+      data: {
+        user: {
+          user_code: user.user_code,
+          user_name: user.user_name,
+          is_active: user.is_active
+        },
+        session: {
+          session_code: session.session_code,
+          session_name: session.session_name,
+          is_active: session.is_active,
+          member_count: session.members.filter(m => m.is_active).length
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error validating:', error);
+    res.status(500).json({
+      success: false,
+      valid: false,
       message: 'Server error',
       error: error.message
     });
