@@ -11,6 +11,7 @@ const trackingFilesRoutes = require('./routes/tracking-files');
 const usersRoutes = require('./routes/users');
 const sessionsRoutes = require('./routes/sessions');
 const invitationsRoutes = require('./routes/invitations');
+const pagesRoutes = require('./routes/pages');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -43,6 +44,7 @@ app.use('/api/tracking-files', trackingFilesRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/invitations', invitationsRoutes);
+app.use('/api/pages', pagesRoutes);
 
 // Health check
 app.get('/', (req, res) => res.send({ ok: true }));

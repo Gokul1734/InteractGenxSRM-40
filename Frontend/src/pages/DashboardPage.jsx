@@ -361,11 +361,11 @@ export default function DashboardPage({ user, activeKey, onNavigate, onLogout })
           </div>
         )}
 
-        {activeKey === 'pages' && (
-          <div className="flex-1 min-h-0 flex flex-col">
-            <PagesDashboard />
-          </div>
-        )}
+                {activeKey === 'pages' && (
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    <PagesDashboard user={user} />
+                  </div>
+                )}
 
         {activeKey === 'ai' && (
           <div className="grid gap-6 lg:grid-cols-2">

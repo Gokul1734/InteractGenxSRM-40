@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { pagesAPI } from '../services/api.js';
 import {
   FileText,
   Plus,
@@ -156,15 +157,21 @@ function SidebarSection({
   );
 }
 
-export default function PagesDashboard() {
+export default function PagesDashboard({ user }) {
   const initial = useMemo(() => loadInitialState() ?? defaultState(), []);
   const [state, setState] = useState(initial);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isVisible, setIsVisible] = useState(false);
   const saveTimer = useRef(null);
+  const remoteSaveTimerRef = useRef(null);
+  const pendingRemoteRef = useRef({ workspace: null, id: null, patch: {} });
   const editorRef = useRef(null);
   const fileInputRef = useRef(null);
   const selectionRef = useRef(null);
   const draggedImageIdRef = useRef(null);
+
+  const userCode = user?.user_code ? String(user.user_code).trim().toUpperCase() : null;
 
   useEffect(() => {
     // slide in
@@ -180,6 +187,69 @@ export default function PagesDashboard() {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [state]);
+
+  // Load from backend (MongoDB) into the two workspaces:
+  // - team => TeamPage collection
+  // - personal => PrivatePage collection (linked to User by user_code)
+  useEffect(() => {
+    let cancelled = false;
+
+    const normalize = (p) => ({
+      id: p._id || p.id,
+      title: p.title || 'Untitled',
+      contentHtml: p.contentHtml ?? '<p></p>',
+      updatedAt: p.updatedAt || p.updated_at || nowIso(),
+    });
+
+    async function load() {
+      setLoading(true);
+      setLoadError('');
+      try {
+        const [teamRes, personalRes] = await Promise.all([
+          pagesAPI.getTeam(),
+          userCode ? pagesAPI.getPrivate(userCode) : Promise.resolve({ success: true, data: [] }),
+        ]);
+
+        const teamPages = (teamRes.data || []).map(normalize);
+        const personalPages = (personalRes.data || []).map(normalize);
+
+        if (cancelled) return;
+
+        setState((prev) => {
+          const next = {
+            ...prev,
+            workspaces: {
+              team: teamPages,
+              personal: personalPages,
+            },
+          };
+
+          // Ensure selection stays valid after refresh
+          const w = next.selected?.workspace || 'team';
+          const id = next.selected?.pageId;
+          const list = next.workspaces[w] || [];
+          const exists = id && list.some((p) => p.id === id);
+
+          if (!exists) {
+            const fallbackWorkspace = teamPages.length ? 'team' : personalPages.length ? 'personal' : 'team';
+            const fallbackPage = next.workspaces[fallbackWorkspace]?.[0] || null;
+            next.selected = { workspace: fallbackWorkspace, pageId: fallbackPage?.id || null };
+          }
+
+          return next;
+        });
+      } catch (err) {
+        if (!cancelled) setLoadError(err?.message || 'Failed to load pages');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [userCode]);
 
   const selectedWorkspaceKey = state.selected.workspace;
   const selectedPageId = state.selected.pageId;
@@ -282,25 +352,59 @@ export default function PagesDashboard() {
     }));
   };
 
-  const addPage = (workspaceKey) => {
-    const newId = uid();
-    const newPage = {
-      id: newId,
-      title: 'Untitled',
-      contentHtml: '<p></p>',
-      updatedAt: nowIso(),
-    };
-    setState((prev) => ({
-      ...prev,
-      selected: { workspace: workspaceKey, pageId: newId },
-      workspaces: {
-        ...prev.workspaces,
-        [workspaceKey]: [newPage, ...(prev.workspaces[workspaceKey] || [])],
-      },
-    }));
+  const addPage = async (workspaceKey) => {
+    try {
+      if (workspaceKey === 'personal' && !userCode) {
+        alert('Please login to create private pages.');
+        return;
+      }
+      // Create in backend first (source of truth), then add to UI.
+      const created =
+        workspaceKey === 'team'
+          ? await pagesAPI.createTeam({
+              title: 'Untitled',
+              contentHtml: '<p></p>',
+              created_by_user_code: userCode || undefined,
+            })
+          : await pagesAPI.createPrivate(userCode, { title: 'Untitled', contentHtml: '<p></p>' });
+
+      const p = created?.data;
+      const newPage = {
+        id: p?._id || p?.id,
+        title: p?.title || 'Untitled',
+        contentHtml: p?.contentHtml ?? '<p></p>',
+        updatedAt: p?.updatedAt || nowIso(),
+      };
+
+      setState((prev) => ({
+        ...prev,
+        selected: { workspace: workspaceKey, pageId: newPage.id },
+        workspaces: {
+          ...prev.workspaces,
+          [workspaceKey]: [newPage, ...(prev.workspaces[workspaceKey] || [])],
+        },
+      }));
+    } catch (err) {
+      alert(err?.message || 'Failed to create page (is MongoDB connected?)');
+    }
   };
 
-  const deletePage = (workspaceKey, pageId) => {
+  const deletePage = async (workspaceKey, pageId) => {
+    try {
+      if (workspaceKey === 'team') {
+        await pagesAPI.deleteTeam(pageId);
+      } else {
+        if (!userCode) {
+          alert('Please login to manage private pages.');
+          return;
+        }
+        await pagesAPI.deletePrivate(userCode, pageId);
+      }
+    } catch (err) {
+      alert(err?.message || 'Failed to delete page');
+      return;
+    }
+
     setState((prev) => {
       const list = prev.workspaces[workspaceKey] || [];
       const nextList = list.filter((p) => p.id !== pageId);
@@ -320,7 +424,7 @@ export default function PagesDashboard() {
           } else {
             // both empty; create one personal page
             const createdId = uid();
-            const created = { id: createdId, title: 'Untitled', content: '', updatedAt: nowIso() };
+          const created = { id: createdId, title: 'Untitled', contentHtml: '<p></p>', updatedAt: nowIso() };
             return {
               ...prev,
               selected: { workspace: 'personal', pageId: createdId },
@@ -338,6 +442,40 @@ export default function PagesDashboard() {
     });
   };
 
+  const queueRemoteSave = (workspaceKey, pageId, patch) => {
+    if (!pageId) return;
+    if (workspaceKey === 'personal' && !userCode) return;
+    if (!patch || (patch.title == null && patch.contentHtml == null)) return;
+
+    pendingRemoteRef.current = {
+      workspace: workspaceKey,
+      id: pageId,
+      patch: { ...pendingRemoteRef.current.patch, ...patch },
+    };
+
+    if (remoteSaveTimerRef.current) clearTimeout(remoteSaveTimerRef.current);
+    remoteSaveTimerRef.current = setTimeout(async () => {
+      const { workspace, id, patch: pending } = pendingRemoteRef.current;
+      pendingRemoteRef.current = { workspace: null, id: null, patch: {} };
+      if (!id) return;
+
+      const payload = {};
+      if (typeof pending.title === 'string') payload.title = pending.title;
+      if (typeof pending.contentHtml === 'string') payload.contentHtml = pending.contentHtml;
+
+      try {
+        if (workspace === 'team') {
+          await pagesAPI.updateTeam(id, payload);
+        } else {
+          await pagesAPI.updatePrivate(userCode, id, payload);
+        }
+      } catch (err) {
+        // non-blocking; keep optimistic UI, but tell console for debugging
+        console.warn('Failed to save page to backend:', err);
+      }
+    }, 650);
+  };
+
   const updateSelected = (patch) => {
     setState((prev) => {
       const w = prev.selected.workspace;
@@ -346,6 +484,8 @@ export default function PagesDashboard() {
       const nextList = list.map((p) => (p.id === id ? { ...p, ...patch, updatedAt: nowIso() } : p));
       return { ...prev, workspaces: { ...prev.workspaces, [w]: nextList } };
     });
+
+    queueRemoteSave(selectedWorkspaceKey, selectedPageId, patch);
   };
 
   const exec = (command, value = null) => {
@@ -788,7 +928,16 @@ export default function PagesDashboard() {
             border: '1px solid var(--color-border)',
           }}
         >
-          {!selectedPage ? (
+          {loading ? (
+            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              Loading pages…
+              {loadError ? (
+                <div className="mt-2 text-xs" style={{ color: 'var(--color-error-text)' }}>
+                  {loadError}
+                </div>
+              ) : null}
+            </div>
+          ) : !selectedPage ? (
             <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
               Select a page to begin.
             </div>

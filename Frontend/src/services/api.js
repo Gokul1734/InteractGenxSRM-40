@@ -239,6 +239,33 @@ export const invitationAPI = {
   },
 };
 
+// ==================== PAGES APIs ====================
+
+export const pagesAPI = {
+  // Team pages
+  getTeam: async () => apiRequest('/pages/team'),
+  createTeam: async (payload) =>
+    apiRequest('/pages/team', { method: 'POST', body: JSON.stringify(payload || {}) }),
+  updateTeam: async (id, payload) =>
+    apiRequest(`/pages/team/${id}`, { method: 'PUT', body: JSON.stringify(payload || {}) }),
+  deleteTeam: async (id) => apiRequest(`/pages/team/${id}`, { method: 'DELETE' }),
+
+  // Private pages (scoped by user_code; user must exist in Users collection)
+  getPrivate: async (userCode) => apiRequest(`/pages/private/${encodeURIComponent(userCode)}`),
+  createPrivate: async (userCode, payload) =>
+    apiRequest(`/pages/private/${encodeURIComponent(userCode)}`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    }),
+  updatePrivate: async (userCode, id, payload) =>
+    apiRequest(`/pages/private/${encodeURIComponent(userCode)}/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload || {}),
+    }),
+  deletePrivate: async (userCode, id) =>
+    apiRequest(`/pages/private/${encodeURIComponent(userCode)}/${id}`, { method: 'DELETE' }),
+};
+
 // ==================== TRACKING APIs ====================
 
 export const trackingAPI = {
