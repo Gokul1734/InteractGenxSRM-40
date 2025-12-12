@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   ArrowLeft, Users, Clock, RefreshCw, Globe, 
   ExternalLink, Activity, Radio, User, Loader2,
@@ -9,7 +9,63 @@ import { sessionAPI } from '../services/api.js';
 function MemberCard({ member, expanded, onToggle }) {
   const isRecording = member.is_recording || member.has_tracking;
   const currentState = member.current_state || member.navigation_tracking?.last_event;
-  const recentEvents = member.recent_events || member.navigation_tracking?.navigation_events?.slice(-10) || [];
+  // Use accumulated events if available, otherwise fall back to recent_events or navigation_tracking
+  const allEvents = member.all_accumulated_events || 
+                    member.navigation_tracking?.navigation_events || 
+                    member.recent_events || 
+                    [];
+  // For recent events display, use the last 10 from all accumulated events
+  const recentEvents = allEvents.slice(-10);
+
+  // Extract unique pages from events where URL exists in context
+  const uniquePages = useMemo(() => {
+    const pageMap = new Map();
+    
+    allEvents.forEach(event => {
+      const url = event.context?.url || event.context?.full_url;
+      if (url) {
+        // Use URL as key to ensure uniqueness
+        if (!pageMap.has(url)) {
+          let domain = event.context?.domain;
+          if (!domain) {
+            try {
+              domain = new URL(url).hostname;
+            } catch (e) {
+              // Invalid URL, skip domain extraction
+              domain = url;
+            }
+          }
+          pageMap.set(url, {
+            url: url,
+            title: event.context?.title || url,
+            favicon: event.context?.favicon || event.context?.favIconUrl,
+            lastSeen: event.timestamp,
+            eventType: event.event_type,
+            domain: domain
+          });
+        } else {
+          // Update with most recent timestamp if newer
+          const existing = pageMap.get(url);
+          if (new Date(event.timestamp) > new Date(existing.lastSeen)) {
+            existing.lastSeen = event.timestamp;
+            existing.eventType = event.event_type;
+            if (event.context?.title && !existing.title) {
+              existing.title = event.context.title;
+            }
+            const favicon = event.context?.favicon || event.context?.favIconUrl;
+            if (favicon && !existing.favicon) {
+              existing.favicon = favicon;
+            }
+          }
+        }
+      }
+    });
+
+    // Sort by last seen (most recent first)
+    return Array.from(pageMap.values()).sort((a, b) => 
+      new Date(b.lastSeen) - new Date(a.lastSeen)
+    );
+  }, [allEvents]);
 
   const formatTime = (dateStr) => {
     if (!dateStr) return '';
@@ -162,6 +218,74 @@ function MemberCard({ member, expanded, onToggle }) {
         </div>
       )}
 
+      {/* Expanded: Unique Pages */}
+      {expanded && uniquePages.length > 0 && (
+        <div 
+          className="border-t"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          <div 
+            className="px-4 py-2 text-xs font-medium sticky top-0"
+            style={{ 
+              background: 'var(--color-surface)',
+              color: 'var(--color-text-secondary)',
+            }}
+          >
+            Visited Pages ({uniquePages.length})
+          </div>
+          <div 
+            className="px-4 pb-3 space-y-2 max-h-64 overflow-y-auto"
+          >
+            {uniquePages.map((page, idx) => (
+              <div
+                key={page.url || idx}
+                className="flex items-start gap-2 p-2 rounded-lg transition-colors hover:bg-opacity-50"
+                style={{
+                  background: idx === 0 ? 'rgba(34, 197, 94, 0.1)' : 'var(--color-surface-dark)',
+                  border: '1px solid',
+                  borderColor: idx === 0 ? 'rgba(34, 197, 94, 0.2)' : 'var(--color-border)',
+                }}
+              >
+                {page.favicon ? (
+                  <img 
+                    src={page.favicon} 
+                    alt="" 
+                    className="w-4 h-4 mt-0.5 rounded shrink-0"
+                    onError={(e) => e.target.style.display = 'none'}
+                  />
+                ) : (
+                  <Globe size={14} className="mt-0.5 shrink-0" style={{ color: 'var(--color-primary)' }} />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div 
+                    className="text-sm font-medium truncate"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    {page.title || 'Untitled'}
+                  </div>
+                  <a
+                    href={page.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs truncate flex items-center gap-1 hover:underline"
+                    style={{ color: 'var(--color-text-tertiary)' }}
+                  >
+                    {page.url}
+                    <ExternalLink size={10} />
+                  </a>
+                  <div 
+                    className="text-xs mt-1"
+                    style={{ color: 'var(--color-text-tertiary)' }}
+                  >
+                    {formatTime(page.lastSeen)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Expanded: Recent Events */}
       {expanded && recentEvents.length > 0 && (
         <div 
@@ -221,6 +345,8 @@ export default function LiveSessionView({ session, user, onBack }) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const lastUpdateRef = useRef(null);
   const intervalRef = useRef(null);
+  // Accumulate all events across updates for each member
+  const accumulatedEventsRef = useRef(new Map()); // Map<user_code, Event[]>
 
   const fetchLiveData = useCallback(async () => {
     try {
@@ -230,7 +356,51 @@ export default function LiveSessionView({ session, user, onBack }) {
       );
       
       if (response.success) {
-        setLiveData(response);
+        // Merge new events with accumulated events for each member
+        const updatedMembers = response.members?.map(member => {
+          const userCode = member.user_code;
+          const existingEvents = accumulatedEventsRef.current.get(userCode) || [];
+          const newEvents = member.recent_events || [];
+          
+          // Create a Set to track unique events by timestamp + event_type + url + tab_id
+          // This ensures we don't miss legitimate duplicate events from different contexts
+          const eventKey = (e) => {
+            const url = e.context?.url || e.context?.full_url || '';
+            const tabId = e.context?.tab_id || '';
+            return `${e.timestamp}-${e.event_type}-${url}-${tabId}`;
+          };
+          const existingKeys = new Set(existingEvents.map(eventKey));
+          
+          // Add only truly new events (not duplicates)
+          const uniqueNewEvents = newEvents.filter(e => {
+            const key = eventKey(e);
+            if (!existingKeys.has(key)) {
+              existingKeys.add(key); // Prevent duplicates within newEvents batch
+              return true;
+            }
+            return false;
+          });
+          
+          // Merge: combine existing + new, then sort by timestamp
+          const allEvents = [...existingEvents, ...uniqueNewEvents].sort(
+            (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+          );
+          
+          // Update accumulated events
+          accumulatedEventsRef.current.set(userCode, allEvents);
+          
+          // Return member with all accumulated events
+          return {
+            ...member,
+            all_accumulated_events: allEvents
+          };
+        }) || [];
+        
+        setLiveData({
+          ...response,
+          members: updatedMembers
+        });
+        
         if (response.timestamp) {
           lastUpdateRef.current = response.timestamp;
         }
@@ -242,6 +412,11 @@ export default function LiveSessionView({ session, user, onBack }) {
     } finally {
       setLoading(false);
     }
+  }, [session.session_code]);
+
+  // Reset accumulated events when session changes
+  useEffect(() => {
+    accumulatedEventsRef.current.clear();
   }, [session.session_code]);
 
   useEffect(() => {
