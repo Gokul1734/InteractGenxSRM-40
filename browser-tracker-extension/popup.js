@@ -14,6 +14,12 @@ const sessionInfoSection = document.getElementById('sessionInfoSection');
 const sessionName = document.getElementById('sessionName');
 const memberList = document.getElementById('memberList');
 
+// Callout DOM Elements
+const calloutSection = document.getElementById('calloutSection');
+const calloutMessage = document.getElementById('calloutMessage');
+const calloutBtn = document.getElementById('calloutBtn');
+const calloutStatus = document.getElementById('calloutStatus');
+
 // API_ROOT is already available from config.js
 
 // Initialize popup state
@@ -106,6 +112,11 @@ function updateUI(isRecording, count = 0) {
     
     userCodeInput.disabled = true;
     sessionCodeInput.disabled = true;
+    
+    // Show callout section when recording
+    if (calloutSection) {
+      calloutSection.style.display = 'block';
+    }
   } else {
     // Recording is OFF
     statusDisplay.innerHTML = `
@@ -119,6 +130,11 @@ function updateUI(isRecording, count = 0) {
     
     userCodeInput.disabled = false;
     sessionCodeInput.disabled = false;
+    
+    // Hide callout section when not recording
+    if (calloutSection) {
+      calloutSection.style.display = 'none';
+    }
   }
 }
 
@@ -329,3 +345,79 @@ stopBtn.addEventListener('click', async () => {
     alert('Failed to stop recording');
   }
 });
+
+// ==================== CALLOUT FUNCTIONALITY ====================
+
+// Show callout status message
+function showCalloutStatus(message, isSuccess) {
+  if (calloutStatus) {
+    calloutStatus.textContent = message;
+    calloutStatus.className = `callout-status ${isSuccess ? 'success' : 'error'}`;
+    calloutStatus.classList.remove('hidden');
+    
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      calloutStatus.classList.add('hidden');
+    }, 3000);
+  }
+}
+
+// Create Callout
+if (calloutBtn) {
+  calloutBtn.addEventListener('click', async () => {
+    const userCode = userCodeInput.value.trim().toUpperCase();
+    const sessionCode = sessionCodeInput.value.trim().toUpperCase();
+    const message = calloutMessage ? calloutMessage.value.trim() : '';
+
+    // Validate we have user and session codes
+    if (!userCode || !sessionCode) {
+      showCalloutStatus('Missing user or session code', false);
+      return;
+    }
+
+    // Disable button during request
+    calloutBtn.disabled = true;
+    calloutBtn.innerHTML = '<span class="callout-icon">⏳</span> Creating callout...';
+
+    // Set a timeout to reset button in case of hung request
+    const resetTimeout = setTimeout(() => {
+      console.warn('Callout request timeout - resetting button');
+      calloutBtn.disabled = false;
+      calloutBtn.innerHTML = '<span class="callout-icon">📍</span> Call Attention to This Page';
+      showCalloutStatus('Request timed out. Please try again.', false);
+    }, 20000); // 20 second safety timeout
+
+    try {
+      console.log('Sending CREATE_CALLOUT message...');
+      
+      // Send message to background script to create callout
+      const response = await chrome.runtime.sendMessage({
+        action: 'CREATE_CALLOUT',
+        user_code: userCode,
+        session_code: sessionCode,
+        message: message
+      });
+
+      clearTimeout(resetTimeout);
+      console.log('Callout response:', response);
+
+      if (response && response.success) {
+        showCalloutStatus('✓ Callout sent to your team!', true);
+        // Clear message input
+        if (calloutMessage) {
+          calloutMessage.value = '';
+        }
+      } else {
+        showCalloutStatus(response?.error || 'Failed to create callout', false);
+      }
+    } catch (error) {
+      clearTimeout(resetTimeout);
+      console.error('Error creating callout:', error);
+      showCalloutStatus(error.message || 'Failed to create callout', false);
+    } finally {
+      // Re-enable button
+      calloutBtn.disabled = false;
+      calloutBtn.innerHTML = '<span class="callout-icon">📍</span> Call Attention to This Page';
+    }
+  });
+}

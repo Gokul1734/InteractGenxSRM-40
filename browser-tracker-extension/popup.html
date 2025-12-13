@@ -402,6 +402,91 @@
       font-size: 12px;
       font-style: italic;
     }
+
+    /* Callout Section Styles */
+    .callout-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .callout-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #3A3A3C;
+      border-radius: 8px;
+      font-size: 12px;
+      background: #2C2C2E;
+      color: #E5E5EA;
+      transition: all 0.2s ease;
+      text-align: left;
+      letter-spacing: normal;
+    }
+
+    .callout-input:focus {
+      outline: none;
+      border-color: #FF9F0A;
+      background: #323234;
+      box-shadow: 0 0 0 3px rgba(255, 159, 10, 0.1);
+    }
+
+    .btn-callout {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 12px 16px;
+      background: linear-gradient(135deg, #FF9F0A 0%, #E68A00 100%);
+      color: #1C1C1E;
+      border: 1px solid #E68A00;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-callout:hover:not(:disabled) {
+      background: linear-gradient(135deg, #FFB340 0%, #FF9F0A 100%);
+      border-color: #FF9F0A;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(255, 159, 10, 0.3);
+    }
+
+    .btn-callout:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .callout-icon {
+      font-size: 14px;
+    }
+
+    .callout-status {
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      text-align: center;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .callout-status.success {
+      background: rgba(82, 193, 124, 0.1);
+      border: 1px solid rgba(82, 193, 124, 0.3);
+      color: #7DD89F;
+    }
+
+    .callout-status.error {
+      background: rgba(239, 154, 154, 0.1);
+      border: 1px solid rgba(239, 154, 154, 0.3);
+      color: #E39999;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
   </style>
 </head>
 <body>
@@ -456,6 +541,19 @@
       <div class="button-group">
         <button id="startBtn" class="btn-start">Start</button>
         <button id="stopBtn" class="btn-stop" disabled>Stop</button>
+      </div>
+    </div>
+
+    <!-- Callout Section (visible only when recording) -->
+    <div class="section" id="calloutSection" style="display: none;">
+      <div class="section-title">📢 Callout</div>
+      <div class="callout-container">
+        <input type="text" id="calloutMessage" placeholder="Optional message for your team..." maxlength="200" class="callout-input">
+        <button id="calloutBtn" class="btn-callout">
+          <span class="callout-icon">📍</span>
+          Call Attention to This Page
+        </button>
+        <div id="calloutStatus" class="callout-status hidden"></div>
       </div>
     </div>
   </div>

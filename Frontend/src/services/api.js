@@ -266,6 +266,82 @@ export const pagesAPI = {
     apiRequest(`/pages/private/${encodeURIComponent(userCode)}/${id}`, { method: 'DELETE' }),
 };
 
+// ==================== CALLOUT APIs ====================
+
+export const calloutAPI = {
+  // Create a new callout
+  create: async (sessionCode, userCode, pageUrl, pageTitle, scrollPosition, selectedText, message) => {
+    return apiRequest('/callouts', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_code: sessionCode,
+        user_code: userCode,
+        page_url: pageUrl,
+        page_title: pageTitle,
+        scroll_position: scrollPosition,
+        selected_text: selectedText,
+        message: message,
+      }),
+    });
+  },
+
+  // Get all callouts for a session
+  getSessionCallouts: async (sessionCode, status = null, excludeUser = null, limit = 50) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (excludeUser) params.append('exclude_user', excludeUser);
+    if (limit) params.append('limit', limit.toString());
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest(`/callouts/session/${sessionCode}${query}`);
+  },
+
+  // Get active (non-expired) callouts for a session (optimized for polling)
+  getActiveCallouts: async (sessionCode, excludeUser = null, since = null) => {
+    const params = new URLSearchParams();
+    if (excludeUser) params.append('exclude_user', excludeUser);
+    if (since) params.append('since', since);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest(`/callouts/session/${sessionCode}/active${query}`);
+  },
+
+  // Get a single callout by ID
+  getById: async (calloutId) => {
+    return apiRequest(`/callouts/${calloutId}`);
+  },
+
+  // Acknowledge a callout (mark as seen)
+  acknowledge: async (calloutId, userCode, userName = null) => {
+    return apiRequest(`/callouts/${calloutId}/acknowledge`, {
+      method: 'POST',
+      body: JSON.stringify({
+        user_code: userCode,
+        user_name: userName,
+      }),
+    });
+  },
+
+  // Dismiss a callout
+  dismiss: async (calloutId, userCode) => {
+    return apiRequest(`/callouts/${calloutId}/dismiss`, {
+      method: 'POST',
+      body: JSON.stringify({ user_code: userCode }),
+    });
+  },
+
+  // Delete a callout
+  delete: async (calloutId, userCode) => {
+    return apiRequest(`/callouts/${calloutId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ user_code: userCode }),
+    });
+  },
+
+  // Get callout statistics for a session
+  getStats: async (sessionCode) => {
+    return apiRequest(`/callouts/session/${sessionCode}/stats`);
+  },
+};
+
 // ==================== TRACKING APIs ====================
 
 export const trackingAPI = {
@@ -334,5 +410,6 @@ export default {
   session: sessionAPI,
   invitation: invitationAPI,
   tracking: trackingAPI,
+  callout: calloutAPI,
 };
 

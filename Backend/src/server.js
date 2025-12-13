@@ -12,6 +12,7 @@ const usersRoutes = require('./routes/users');
 const sessionsRoutes = require('./routes/sessions');
 const invitationsRoutes = require('./routes/invitations');
 const pagesRoutes = require('./routes/pages');
+const calloutsRoutes = require('./routes/callouts');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -47,6 +48,7 @@ app.use('/api/users', usersRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/invitations', invitationsRoutes);
 app.use('/api/pages', pagesRoutes);
+app.use('/api/callouts', calloutsRoutes);
 
 // Health check
 app.get('/', (req, res) => res.send({ ok: true }));
