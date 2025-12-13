@@ -3,10 +3,12 @@
 
 const config = {
   // API Base URL - loaded from environment variables
-  API_BASE_URL: 'http://localhost:5000/api',
+  // In production, set VITE_API_BASE_URL in Vercel environment variables
+  // Example: https://your-backend-domain.com/api
+  API_BASE_URL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api',
   
   // Environment
-  ENVIRONMENT: import.meta.env.VITE_ENVIRONMENT || 'development',
+  ENVIRONMENT: import.meta.env.VITE_ENVIRONMENT || import.meta.env.MODE || 'development',
   
   // Derived API endpoints
   get API_TRACKING_FILES() {
