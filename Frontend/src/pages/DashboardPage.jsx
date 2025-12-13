@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import TopNav from '../components/TopNav.jsx';
 import PagesDashboard from './PagesDashboard.jsx';
+import AIStudio from './AIStudio.jsx';
 import SessionCard from '../components/SessionCard.jsx';
 import CreateSessionModal from '../components/CreateSessionModal.jsx';
 import InviteModal from '../components/InviteModal.jsx';
@@ -44,6 +45,13 @@ export default function DashboardPage({ user, activeKey, onNavigate, onLogout })
 
   // Live session view
   const [liveSession, setLiveSession] = useState(null);
+
+  // Clear live session when navigating away from sessions tab
+  useEffect(() => {
+    if (activeKey !== 'sessions' && liveSession) {
+      setLiveSession(null);
+    }
+  }, [activeKey, liveSession]);
 
   // Fetch user's sessions
   const fetchSessions = useCallback(async () => {
@@ -368,14 +376,7 @@ export default function DashboardPage({ user, activeKey, onNavigate, onLogout })
                 )}
 
         {activeKey === 'ai' && (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Panel title="AI Studio">
-              Workspace for running AI workflows on recorded data (coming soon).
-            </Panel>
-            <Panel title="Notes">
-              We'll wire this later once the data model and ingestion stabilize.
-            </Panel>
-          </div>
+          <AIStudio user={user} />
         )}
       </main>
 

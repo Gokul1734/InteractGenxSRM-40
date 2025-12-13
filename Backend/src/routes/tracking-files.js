@@ -120,12 +120,63 @@ router.post('/update', async (req, res) => {
       event_count: eventCount
     };
     
+    // If recording_ended_at is provided, also set is_active to false
     if (data.recording_ended_at) {
       updateData.recording_ended_at = data.recording_ended_at;
+      updateData.is_active = false;
+      
+      // When stopping, update the document regardless of is_active status
+      // (in case it was already stopped by the /stop endpoint)
+      const tracking = await NavigationTracking.findOneAndUpdate(
+        {
+          user_code: normalizedUserCode,
+          session_code: normalizedSessionCode
+        },
+        {
+          $set: updateData
+        },
+        { 
+          new: true
+        }
+      );
+      
+      // If tracking document exists, continue with linking logic
+      if (tracking) {
+        // Link tracking to session member using atomic operation
+        if (user && session) {
+          await session.updateMemberTracking(normalizedUserCode, tracking._id);
+        }
+        
+        console.log(`✓ LIVE UPDATE (STOPPING): ${normalizedUserCode}_${normalizedSessionCode} → ${eventCount} events`);
+        
+        res.status(200).json({
+          success: true,
+          message: 'Data updated live',
+          data: {
+            folder: `${normalizedUserCode}_${normalizedSessionCode}`,
+            event_count: eventCount,
+            updated_at: new Date().toISOString()
+          }
+        });
+        return;
+      }
+      
+      // If no tracking document found when stopping, that's okay - it might have been stopped already
+      res.status(200).json({
+        success: true,
+        message: 'Recording already stopped',
+        data: {
+          folder: `${normalizedUserCode}_${normalizedSessionCode}`,
+          event_count: 0,
+          updated_at: new Date().toISOString()
+        }
+      });
+      return;
     }
 
     // Use atomic findOneAndUpdate with upsert for concurrency safety
     // This prevents race conditions when multiple users are updating simultaneously
+    // Only update if is_active is true (don't update stopped recordings)
     const tracking = await NavigationTracking.findOneAndUpdate(
       {
         user_code: normalizedUserCode,

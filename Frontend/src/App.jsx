@@ -4,7 +4,11 @@ import DashboardPage from './pages/DashboardPage.jsx';
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [activeKey, setActiveKey] = useState('home');
+  const [activeKey, setActiveKey] = useState(() => {
+    // Load active tab from localStorage on mount
+    const stored = localStorage.getItem('cobrowser_active_tab');
+    return stored || 'home';
+  });
   const [loading, setLoading] = useState(true);
 
   // Check for stored user on mount
@@ -29,6 +33,13 @@ export default function App() {
     }
     setLoading(false);
   }, []);
+
+  // Save active tab to localStorage whenever it changes
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem('cobrowser_active_tab', activeKey);
+    }
+  }, [activeKey, user]);
 
   const handleAuth = (userData) => {
     setUser(userData);

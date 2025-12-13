@@ -7,7 +7,7 @@ import {
 import { sessionAPI } from '../services/api.js';
 
 function MemberCard({ member, expanded, onToggle, memberNumber }) {
-  const isRecording = member.is_recording || member.has_tracking;
+  const isRecording = member.is_recording === true; // Only show as recording if explicitly true
   // Use current_state from API (which now shows latest PAGE_LOADED event)
   const currentState = member.current_state;
   // Use navigation_events from API (which now only contains PAGE_LOADED events, unique by URL)
