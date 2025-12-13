@@ -10,6 +10,11 @@ let recordingData = null;
 let isRecording = false;
 let autoSaveTimeout = null;
 let backendAvailable = true;
+let isSaving = false; // Prevent concurrent saves
+let saveQueue = []; // Queue for pending saves
+let retryAttempts = 0;
+let maxRetries = 5;
+let baseRetryDelay = 1000; // Start with 1 second
 
 // Initialize extension
 chrome.runtime.onInstalled.addListener(() => {
@@ -209,6 +214,12 @@ async function startRecording(userCode, sessionCode) {
     is_recording: true
   });
   
+  // Reset save state when starting new recording
+  isSaving = false;
+  saveQueue = [];
+  retryAttempts = 0;
+  backendAvailable = true;
+  
   // Initial save when starting
   scheduleAutoSave();
 }
@@ -259,6 +270,15 @@ function addEvent(eventType, context) {
   
   console.log(`EVENT: ${eventType}`, context);
   
+  // Check backend health if it was previously unavailable
+  if (!backendAvailable && retryAttempts === 0) {
+    checkBackendHealth().then(available => {
+      if (available) {
+        console.log('✓ Backend health check passed, resuming saves');
+      }
+    });
+  }
+  
   // Auto-save after each event (with debouncing)
   scheduleAutoSave();
 }
@@ -275,14 +295,122 @@ function scheduleAutoSave() {
   
   // Schedule auto-save after 2 seconds of inactivity
   autoSaveTimeout = setTimeout(() => {
-    saveToBackend();
+    enqueueSave();
   }, 2000);
 }
 
-async function saveToBackend() {
-  if (!recordingData || !backendAvailable) {
+// Queue save operation to prevent concurrent saves
+function enqueueSave(immediate = false) {
+  if (!recordingData) {
     return;
   }
+  
+  // Create a save task
+  const saveTask = {
+    timestamp: Date.now(),
+    immediate
+  };
+  
+  // Add to queue if not already queued (prevent duplicate saves)
+  const existingIndex = saveQueue.findIndex(
+    task => Math.abs(task.timestamp - saveTask.timestamp) < 100
+  );
+  
+  if (existingIndex === -1) {
+    saveQueue.push(saveTask);
+  } else if (immediate) {
+    // Replace with immediate save
+    saveQueue[existingIndex] = saveTask;
+  }
+  
+  // Process queue
+  processSaveQueue();
+}
+
+// Process save queue one at a time
+async function processSaveQueue() {
+  // Skip if already saving or no items in queue
+  if (isSaving || saveQueue.length === 0) {
+    return;
+  }
+  
+  // Get the oldest save task (or immediate one if available)
+  const immediateIndex = saveQueue.findIndex(task => task.immediate);
+  const taskIndex = immediateIndex !== -1 ? immediateIndex : 0;
+  const task = saveQueue[taskIndex];
+  saveQueue.splice(taskIndex, 1);
+  
+  isSaving = true;
+  
+  try {
+    await saveToBackend();
+    // Success - reset retry counter and mark backend as available
+    retryAttempts = 0;
+    if (!backendAvailable) {
+      backendAvailable = true;
+      console.log('✓ Backend connection recovered');
+    }
+  } catch (error) {
+    // Handle error with retry logic
+    await handleSaveError(error);
+  } finally {
+    isSaving = false;
+    // Process next item in queue if any
+    if (saveQueue.length > 0) {
+      setTimeout(() => processSaveQueue(), 100);
+    }
+  }
+}
+
+// Handle save errors with retry logic
+async function handleSaveError(error) {
+  const isNetworkError = error.name === 'TypeError' || 
+                        error.message.includes('fetch') ||
+                        error.message.includes('network') ||
+                        error.message.includes('Failed to fetch');
+  
+  const isTimeoutError = error.name === 'AbortError' || 
+                        error.message.includes('timeout');
+  
+  // If it's a network error or timeout, try to recover
+  if ((isNetworkError || isTimeoutError) && retryAttempts < maxRetries) {
+    retryAttempts++;
+    const delay = baseRetryDelay * Math.pow(2, retryAttempts - 1); // Exponential backoff
+    
+    console.warn(`⚠ Save failed (attempt ${retryAttempts}/${maxRetries}), retrying in ${delay}ms...`, error.message);
+    
+    // Re-queue the save with delay
+    setTimeout(() => {
+      enqueueSave();
+    }, delay);
+    
+    // Don't mark backend as unavailable yet if we're still retrying
+    if (retryAttempts < maxRetries) {
+      return;
+    }
+  }
+  
+  // Mark backend as unavailable only after max retries
+  if (retryAttempts >= maxRetries) {
+    backendAvailable = false;
+    console.error(`❌ Backend unavailable after ${maxRetries} attempts. Will retry on next event.`);
+    
+    // Reset retry counter for next attempt (after user activity resumes)
+    setTimeout(() => {
+      retryAttempts = 0;
+    }, 30000); // Reset after 30 seconds
+  }
+}
+
+// Main save function with improved error handling
+async function saveToBackend() {
+  if (!recordingData) {
+    throw new Error('No recording data available');
+  }
+  
+  // Create abort controller for timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
   
   try {
     const response = await fetch(`${API_BASE_URL}/update`, {
@@ -292,19 +420,63 @@ async function saveToBackend() {
         user_code: recordingData.user_code,
         session_code: recordingData.session_code,
         data: recordingData
-      })
+      }),
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
+    
+    // Check if response is ok
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
     
     const result = await response.json();
     
     if (result.success) {
       console.log(`✓ Backend updated: ${result.data.event_count} events`);
+      return result;
     } else {
-      console.warn('⚠ Backend update failed:', result.message);
+      throw new Error(result.message || 'Backend returned unsuccessful response');
     }
   } catch (error) {
-    console.error('❌ Backend update error:', error);
-    backendAvailable = false;
+    clearTimeout(timeoutId);
+    
+    // Re-throw for retry logic
+    if (error.name === 'AbortError') {
+      throw new Error('Request timeout after 10 seconds');
+    }
+    throw error;
+  }
+}
+
+// Health check function to test backend availability
+async function checkBackendHealth() {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout for health check
+    
+    // API_BASE_URL is already the base path, just append /health
+    const healthUrl = API_BASE_URL.endsWith('/update') 
+      ? API_BASE_URL.replace('/update', '/health')
+      : `${API_BASE_URL}/health`;
+    
+    const response = await fetch(healthUrl, {
+      method: 'GET',
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      backendAvailable = true;
+      retryAttempts = 0;
+      return true;
+    }
+    return false;
+  } catch (error) {
+    return false;
   }
 }
 
@@ -317,8 +489,26 @@ async function stopRecording() {
   if (recordingData) {
     recordingData.recording_ended_at = new Date().toISOString();
     
-    // Final save to backend
-    await saveToBackend();
+    // Final save to backend (enqueue as immediate to ensure it's processed first)
+    enqueueSave(true);
+    
+    // Wait for save to complete (with timeout)
+    let attempts = 0;
+    while (isSaving && attempts < 50) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+    
+    // Try one more time if backend was marked unavailable
+    if (!backendAvailable && retryAttempts < maxRetries) {
+      try {
+        await saveToBackend();
+        backendAvailable = true;
+        retryAttempts = 0;
+      } catch (error) {
+        console.warn('Final save attempt failed:', error);
+      }
+    }
     
     // Notify backend that session is stopped
     if (backendAvailable) {
