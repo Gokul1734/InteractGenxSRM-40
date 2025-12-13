@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { pagesAPI } from '../services/api.js';
 import {
   FileText,
@@ -71,6 +71,42 @@ function defaultState() {
 function saveState(state) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+}
+
+function normalizeClipBlocks(rootEl) {
+  try {
+    if (!rootEl) return;
+
+    // Ensure clips remain editable, but always leave an editable paragraph after them
+    // so users can click below and continue typing outside the clip.
+    rootEl.querySelectorAll('.cb-clip').forEach((el) => {
+      el.removeAttribute('contenteditable');
+
+      const next = el.nextSibling;
+      const isNextEditableParagraph =
+        next && next.nodeType === Node.ELEMENT_NODE && next.nodeName === 'P';
+
+      if (!isNextEditableParagraph) {
+        const p = document.createElement('p');
+        p.innerHTML = '<br/>';
+        el.after(p);
+      }
+    });
+  } catch {
+    // ignore
+  }
+}
+
+function normalizeImageBlocks(rootEl) {
+  try {
+    if (!rootEl) return;
+    rootEl.querySelectorAll('.cb-image-block').forEach((el) => {
+      // Prevent HTML5 drag/drop jitter. We implement smooth pointer-drag instead.
+      el.setAttribute('draggable', 'false');
+    });
   } catch {
     // ignore
   }
@@ -170,8 +206,21 @@ export default function PagesDashboard({ user }) {
   const fileInputRef = useRef(null);
   const selectionRef = useRef(null);
   const draggedImageIdRef = useRef(null);
+  const imgDragRef = useRef({
+    active: false,
+    ghostEl: null,
+    placeholderEl: null,
+    blockEl: null,
+    offsetX: 0,
+    offsetY: 0,
+    rafId: 0,
+    x: 0,
+    y: 0,
+  });
 
   const userCode = user?.user_code ? String(user.user_code).trim().toUpperCase() : null;
+  const lastLocalEditAtRef = useRef(0);
+  const scrollByPageRef = useRef({});
 
   useEffect(() => {
     // slide in
@@ -191,64 +240,121 @@ export default function PagesDashboard({ user }) {
   // Load from backend (MongoDB) into the two workspaces:
   // - team => TeamPage collection
   // - personal => PrivatePage collection (linked to User by user_code)
+  const normalizeRemotePage = (p) => ({
+    id: p._id || p.id,
+    title: p.title || 'Untitled',
+    contentHtml: p.contentHtml ?? '<p></p>',
+    updatedAt: p.updatedAt || p.updated_at || nowIso(),
+  });
+
+  const isCurrentlyEditingSelected = () => {
+    const editor = editorRef.current;
+    if (!editor) return false;
+    const active = document.activeElement === editor;
+    const recent = Date.now() - (lastLocalEditAtRef.current || 0) < 1200;
+    return active && recent;
+  };
+
+  const fetchPagesAndMerge = async ({ showSpinner = false } = {}) => {
+    if (showSpinner) setLoading(true);
+    setLoadError('');
+
+    const [teamRes, personalRes] = await Promise.all([
+      pagesAPI.getTeam(),
+      userCode ? pagesAPI.getPrivate(userCode) : Promise.resolve({ success: true, data: [] }),
+    ]);
+
+    const remoteTeam = (teamRes.data || []).map(normalizeRemotePage);
+    const remotePersonal = (personalRes.data || []).map(normalizeRemotePage);
+
+    setState((prev) => {
+      const next = {
+        ...prev,
+        workspaces: {
+          team: remoteTeam,
+          personal: remotePersonal,
+        },
+      };
+
+      // If user is actively editing selected page, keep local selected page content/title in state
+      // (prevents poll from clobbering in-progress typing).
+      if (isCurrentlyEditingSelected()) {
+        const w = prev.selected.workspace;
+        const id = prev.selected.pageId;
+        const localList = prev.workspaces[w] || [];
+        const localSelected = localList.find((p) => p.id === id);
+        if (localSelected) {
+          next.workspaces[w] = (next.workspaces[w] || []).map((p) => (p.id === id ? localSelected : p));
+        }
+      }
+
+      // Ensure selection stays valid after refresh
+      const w = next.selected?.workspace || 'team';
+      const id = next.selected?.pageId;
+      const list = next.workspaces[w] || [];
+      const exists = id && list.some((p) => p.id === id);
+
+      if (!exists) {
+        const fallbackWorkspace = remoteTeam.length ? 'team' : remotePersonal.length ? 'personal' : 'team';
+        const fallbackPage = next.workspaces[fallbackWorkspace]?.[0] || null;
+        next.selected = { workspace: fallbackWorkspace, pageId: fallbackPage?.id || null };
+      }
+
+      return next;
+    });
+  };
+
+  // Initial load (shows spinner)
   useEffect(() => {
     let cancelled = false;
-
-    const normalize = (p) => ({
-      id: p._id || p.id,
-      title: p.title || 'Untitled',
-      contentHtml: p.contentHtml ?? '<p></p>',
-      updatedAt: p.updatedAt || p.updated_at || nowIso(),
-    });
-
-    async function load() {
-      setLoading(true);
-      setLoadError('');
+    (async () => {
       try {
-        const [teamRes, personalRes] = await Promise.all([
-          pagesAPI.getTeam(),
-          userCode ? pagesAPI.getPrivate(userCode) : Promise.resolve({ success: true, data: [] }),
-        ]);
-
-        const teamPages = (teamRes.data || []).map(normalize);
-        const personalPages = (personalRes.data || []).map(normalize);
-
-        if (cancelled) return;
-
-        setState((prev) => {
-          const next = {
-            ...prev,
-            workspaces: {
-              team: teamPages,
-              personal: personalPages,
-            },
-          };
-
-          // Ensure selection stays valid after refresh
-          const w = next.selected?.workspace || 'team';
-          const id = next.selected?.pageId;
-          const list = next.workspaces[w] || [];
-          const exists = id && list.some((p) => p.id === id);
-
-          if (!exists) {
-            const fallbackWorkspace = teamPages.length ? 'team' : personalPages.length ? 'personal' : 'team';
-            const fallbackPage = next.workspaces[fallbackWorkspace]?.[0] || null;
-            next.selected = { workspace: fallbackWorkspace, pageId: fallbackPage?.id || null };
-          }
-
-          return next;
-        });
+        await fetchPagesAndMerge({ showSpinner: true });
       } catch (err) {
         if (!cancelled) setLoadError(err?.message || 'Failed to load pages');
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }
-
-    load();
+    })();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userCode]);
+
+  // Continuous retrier: keep pulling latest pages in near-realtime.
+  // User-requested: poll every 500ms. We also prevent overlapping fetches.
+  useEffect(() => {
+    let cancelled = false;
+    const delayMs = 500;
+    let timer = null;
+    let inFlight = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (inFlight) {
+        timer = setTimeout(tick, delayMs);
+        return;
+      }
+      inFlight = true;
+      try {
+        await fetchPagesAndMerge({ showSpinner: false });
+      } catch (err) {
+        console.warn('Pages live refresh failed:', err);
+      } finally {
+        inFlight = false;
+        if (!cancelled) {
+          timer = setTimeout(tick, delayMs);
+        }
+      }
+    };
+
+    timer = setTimeout(tick, delayMs);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userCode]);
 
   const selectedWorkspaceKey = state.selected.workspace;
@@ -289,13 +395,30 @@ export default function PagesDashboard({ user }) {
   }, []);
 
   // When selection changes, update editor HTML without re-rendering the contentEditable children
-  useEffect(() => {
-    if (!editorRef.current) return;
+  // Hydrate editor HTML as soon as the editor mounts (important when loading flips from true->false),
+  // and keep scroll position stable when remote refresh updates content.
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (loading) return;
+
     const html = selectedPage?.contentHtml ?? '';
-    if (editorRef.current.innerHTML !== html) {
-      editorRef.current.innerHTML = html;
+    // Don't stomp the editor DOM while the user is actively typing.
+    if (isCurrentlyEditingSelected()) return;
+
+    if (editor.innerHTML !== html) {
+      const key = `${selectedWorkspaceKey}:${selectedPageId}`;
+      const prevScrollTop = scrollByPageRef.current[key] ?? editor.scrollTop ?? 0;
+
+      editor.innerHTML = html;
+      // Ensure clipped blocks stay editable, and typing outside remains easy.
+      normalizeClipBlocks(editor);
+      normalizeImageBlocks(editor);
+
+      // Restore scroll (best-effort)
+      editor.scrollTop = prevScrollTop;
     }
-  }, [selectedWorkspaceKey, selectedPageId, selectedPage?.contentHtml]);
+  }, [loading, selectedWorkspaceKey, selectedPageId, selectedPage?.contentHtml]);
 
   const saveSelection = () => {
     try {
@@ -477,6 +600,7 @@ export default function PagesDashboard({ user }) {
   };
 
   const updateSelected = (patch) => {
+    lastLocalEditAtRef.current = Date.now();
     setState((prev) => {
       const w = prev.selected.workspace;
       const id = prev.selected.pageId;
@@ -709,7 +833,7 @@ export default function PagesDashboard({ user }) {
     blockEl.classList.add('cb-selected');
   };
 
-  const insertHtmlAtSelection = (html) => {
+  const insertHtmlAtSelection = (html, opts = {}) => {
     const editor = editorRef.current;
     if (!editor) return;
     editor.focus();
@@ -727,17 +851,47 @@ export default function PagesDashboard({ user }) {
       selectionRef.current = range;
     }
 
+    // If requested, avoid inserting inside a specific container (e.g., clip box).
+    const avoidInsideSelector = opts?.avoidInsideSelector;
+    if (avoidInsideSelector && range) {
+      const startEl =
+        range.startContainer?.nodeType === Node.ELEMENT_NODE
+          ? range.startContainer
+          : range.startContainer?.parentElement;
+      const blocked = startEl?.closest?.(avoidInsideSelector);
+      if (blocked && editor.contains(blocked)) {
+        const safeRange = document.createRange();
+        safeRange.setStartAfter(blocked);
+        safeRange.collapse(true);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(safeRange);
+        selectionRef.current = safeRange.cloneRange();
+        range = safeRange;
+      }
+    }
+
     const wrapper = document.createElement('div');
     wrapper.innerHTML = html;
-    const node = wrapper.firstChild;
-    if (!node) return;
+
+    // Insert ALL nodes (not just firstChild). This avoids issues when the HTML string has
+    // leading whitespace/newlines (firstChild becomes a text node) and supports multi-node inserts.
+    const nodes = Array.from(wrapper.childNodes).filter((n) => {
+      if (n.nodeType !== Node.TEXT_NODE) return true;
+      return (n.textContent || '').trim().length > 0;
+    });
+    if (nodes.length === 0) return;
+
+    const frag = document.createDocumentFragment();
+    nodes.forEach((n) => frag.appendChild(n));
 
     range.deleteContents();
-    range.insertNode(node);
+    range.insertNode(frag);
 
-    // Move caret after inserted node
+    // Move caret after last inserted node
+    const lastNode = nodes[nodes.length - 1];
     const after = document.createRange();
-    after.setStartAfter(node);
+    after.setStartAfter(lastNode);
     after.collapse(true);
     const sel = window.getSelection();
     sel?.removeAllRanges();
@@ -756,7 +910,8 @@ export default function PagesDashboard({ user }) {
       </div>
       <p></p>
     `;
-    insertHtmlAtSelection(html);
+    // Images should never be inserted inside a clip block; always insert after it.
+    insertHtmlAtSelection(html, { avoidInsideSelector: '.cb-clip' });
   };
 
   const promptImageUrl = () => {
@@ -783,6 +938,8 @@ export default function PagesDashboard({ user }) {
     reader.onload = () => {
       const dataUrl = reader.result;
       insertImageBlock(String(dataUrl));
+      // Allow selecting the same file again to re-insert it.
+      if (fileInputRef.current) fileInputRef.current.value = '';
     };
     reader.readAsDataURL(file);
   };
@@ -817,12 +974,192 @@ export default function PagesDashboard({ user }) {
     }
   };
 
+  const stopImageDrag = () => {
+    const editor = editorRef.current;
+    const st = imgDragRef.current;
+    if (!st.active) return;
+
+    st.active = false;
+    if (st.rafId) cancelAnimationFrame(st.rafId);
+    st.rafId = 0;
+
+    // Put image back into the editor where the placeholder is.
+    if (editor && st.placeholderEl && st.blockEl) {
+      st.placeholderEl.replaceWith(st.blockEl);
+      st.blockEl.classList.remove('cb-image-ghost');
+      st.blockEl.style.transform = '';
+      st.blockEl.style.position = '';
+      st.blockEl.style.left = '';
+      st.blockEl.style.top = '';
+      st.blockEl.style.margin = '';
+      st.blockEl.style.pointerEvents = '';
+      st.blockEl.style.zIndex = '';
+      st.blockEl.style.opacity = '';
+      updateSelected({ contentHtml: editor.innerHTML });
+    }
+
+    // Cleanup ghost if still in body
+    if (st.ghostEl && st.ghostEl.parentNode) {
+      st.ghostEl.remove();
+    }
+
+    st.ghostEl = null;
+    st.placeholderEl = null;
+    st.blockEl = null;
+  };
+
+  const scheduleImageDragFrame = () => {
+    const st = imgDragRef.current;
+    if (st.rafId) return;
+    st.rafId = requestAnimationFrame(() => {
+      st.rafId = 0;
+      const editor = editorRef.current;
+      if (!st.active || !editor) return;
+
+      // Move ghost
+      if (st.ghostEl) {
+        const left = st.x - st.offsetX;
+        const top = st.y - st.offsetY;
+        st.ghostEl.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+      }
+
+      // Move placeholder based on caret position (text reflows while dragging)
+      const range = getCaretRangeFromPoint(st.x, st.y);
+      if (!range || !editor.contains(range.startContainer) || !st.placeholderEl) return;
+
+      // Avoid inserting inside clip boxes
+      const startEl =
+        range.startContainer?.nodeType === Node.ELEMENT_NODE
+          ? range.startContainer
+          : range.startContainer?.parentElement;
+      const clip = startEl?.closest?.('.cb-clip');
+      try {
+        st.placeholderEl.remove();
+        const r = document.createRange();
+        if (clip && editor.contains(clip)) {
+          r.setStartAfter(clip);
+        } else {
+          r.setStart(range.startContainer, range.startOffset);
+        }
+        r.collapse(true);
+        r.insertNode(st.placeholderEl);
+      } catch {
+        // ignore
+      }
+    });
+  };
+
+  const startImageDrag = (block, e) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const rect = block.getBoundingClientRect();
+
+    // Placeholder keeps layout so text wraps/reflows while dragging
+    const placeholder = document.createElement('span');
+    placeholder.className = 'cb-image-placeholder';
+    placeholder.style.width = `${rect.width}px`;
+    placeholder.style.height = `${rect.height}px`;
+
+    // Replace block with placeholder in DOM
+    block.replaceWith(placeholder);
+
+    // Ghost follows pointer smoothly (overlay)
+    const ghost = block;
+    ghost.classList.add('cb-image-ghost');
+    ghost.style.position = 'fixed';
+    ghost.style.left = '0px';
+    ghost.style.top = '0px';
+    ghost.style.margin = '0';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.zIndex = '2147483647';
+    ghost.style.opacity = '0.92';
+    document.body.appendChild(ghost);
+
+    const st = imgDragRef.current;
+    st.active = true;
+    st.blockEl = block;
+    st.placeholderEl = placeholder;
+    st.ghostEl = ghost;
+    st.offsetX = e.clientX - rect.left;
+    st.offsetY = e.clientY - rect.top;
+    st.x = e.clientX;
+    st.y = e.clientY;
+
+    scheduleImageDragFrame();
+  };
+
+  const handleEditorPointerDown = (e) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (e.button !== 0) return;
+
+    const block = e.target?.closest?.('.cb-image-block');
+    if (!block || !editor.contains(block)) return;
+
+    // Let native CSS resize handle work. The resize grab zone is the bottom-right corner.
+    // If we intercept that, resize becomes drag.
+    try {
+      const rect = block.getBoundingClientRect();
+      const RESIZE_GRAB_PX = 18;
+      const inResizeCorner =
+        rect.right - e.clientX <= RESIZE_GRAB_PX &&
+        rect.bottom - e.clientY <= RESIZE_GRAB_PX;
+      if (inResizeCorner) {
+        // Don't preventDefault/stopPropagation: allow the browser to resize.
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    selectImageBlock(block);
+    saveSelection();
+    startImageDrag(block, e);
+
+    // Capture the pointer so pointerup still fires even if user drags outside the editor.
+    try {
+      if (typeof editor.setPointerCapture === 'function' && e.pointerId != null) {
+        editor.setPointerCapture(e.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleEditorPointerMove = (e) => {
+    const st = imgDragRef.current;
+    if (!st.active) return;
+    st.x = e.clientX;
+    st.y = e.clientY;
+    scheduleImageDragFrame();
+  };
+
+  const handleEditorPointerUp = (e) => {
+    // Release capture if we grabbed it
+    try {
+      const editor = editorRef.current;
+      if (editor && typeof editor.releasePointerCapture === 'function' && e?.pointerId != null) {
+        editor.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+    stopImageDrag();
+  };
+
   const handleDragStart = (e) => {
     const editor = editorRef.current;
     if (!editor) return;
     const target = e.target;
     const block = target?.closest?.('.cb-image-block');
     if (!block || !editor.contains(block)) return;
+    // Disable HTML5 dragging (jittery). Pointer-drag handles image movement.
+    e.preventDefault();
+    return;
 
     const id = block.getAttribute('data-cb-id');
     draggedImageIdRef.current = id;
@@ -1151,9 +1488,17 @@ export default function PagesDashboard({ user }) {
                   updateSelected({ contentHtml: e.currentTarget.innerHTML });
                 }}
                   onClick={handleEditorClick}
+                  onPointerDown={handleEditorPointerDown}
+                  onPointerMove={handleEditorPointerMove}
+                  onPointerUp={handleEditorPointerUp}
+                  onPointerCancel={handleEditorPointerUp}
                   onDragStart={handleDragStart}
                   onDragOver={handleDragOver}
                   onDrop={handleDrop}
+                  onScroll={(e) => {
+                    const key = `${selectedWorkspaceKey}:${selectedPageId}`;
+                    scrollByPageRef.current[key] = e.currentTarget.scrollTop;
+                  }}
                 style={{
                   background: 'var(--color-surface-dark)',
                   border: '1px solid var(--color-border)',

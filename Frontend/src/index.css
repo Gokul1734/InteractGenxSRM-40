@@ -72,10 +72,15 @@ code {
   display: inline-block;
   max-width: 100%;
   resize: both;
-  overflow: auto;
+  overflow: hidden; /* no scrollbars/cropping behavior while resizing */
   border-radius: 12px;
   border: 1px solid transparent;
   background: transparent;
+  min-width: 120px;
+  min-height: 80px;
+  float: left; /* allows text to wrap around the image */
+  margin: 0.5rem 0.9rem 0.5rem 0;
+  cursor: grab;
 }
 
 .rich-editor .cb-image-block.cb-selected {
@@ -85,12 +90,31 @@ code {
 .rich-editor .cb-image-block img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: fill; /* stretch/deform with the resized container (as requested) */
   border-radius: 10px;
 }
 
 .rich-editor .cb-image-block:active {
   cursor: grabbing;
+}
+
+.rich-editor .cb-image-placeholder {
+  display: inline-block;
+  float: left;
+  margin: 0.5rem 0.9rem 0.5rem 0;
+  border-radius: 12px;
+  border: 1px dashed var(--color-border-hover);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cb-image-ghost {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  opacity: 0.92;
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
 }
 
 /* Custom scrollbar */

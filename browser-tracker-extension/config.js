@@ -27,9 +27,13 @@ const CONFIG = {
 // ============================================================================
 const API_BASE_URL = CONFIG[ENVIRONMENT].API_BASE_URL;
 const DASHBOARD_URL = CONFIG[ENVIRONMENT].DASHBOARD_URL;
+// Derive base /api root and pages API URL from tracking-files URL
+const API_ROOT = API_BASE_URL.replace(/\/tracking-files\/?$/, '');
+const PAGES_BASE_URL = `${API_ROOT}/pages`;
 
 // Log current environment on load
 console.log(`[Config] Environment: ${ENVIRONMENT}`);
 console.log(`[Config] API URL: ${API_BASE_URL}`);
 console.log(`[Config] Dashboard URL: ${DASHBOARD_URL}`);
+console.log(`[Config] Pages API URL: ${PAGES_BASE_URL}`);
 

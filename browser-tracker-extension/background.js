@@ -15,6 +15,89 @@ let backendAvailable = true;
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Browser Navigation Tracker installed');
   addEvent('EXTENSION_LOADED', {});
+
+  // Context menu for sending selected text to Pages
+  try {
+    chrome.contextMenus.create({
+      id: 'cb_send_to_pages',
+      title: 'Send selection to CoBrowser Pages',
+      contexts: ['selection'],
+    });
+    chrome.contextMenus.create({
+      id: 'cb_send_image_to_pages',
+      title: 'Send image to CoBrowser Pages',
+      contexts: ['image'],
+    });
+  } catch (e) {
+    console.warn('Failed to create context menu:', e);
+  }
+});
+
+// Pending clip payload is stored in session storage so it survives service worker suspension.
+const PENDING_CLIP_KEY = 'cb_pending_clip';
+
+async function setPendingClip(payload) {
+  try {
+    await chrome.storage.session.set({ [PENDING_CLIP_KEY]: payload });
+  } catch (e) {
+    // Fallback (older Chrome)
+    await chrome.storage.local.set({ [PENDING_CLIP_KEY]: payload });
+  }
+}
+
+async function openSendWindow() {
+  const url = chrome.runtime.getURL('send.html');
+  await chrome.windows.create({
+    url,
+    type: 'popup',
+    width: 440,
+    height: 640,
+  });
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== 'cb_send_to_pages' && info.menuItemId !== 'cb_send_image_to_pages') return;
+  try {
+    // Image: store image srcUrl as a pending clip of type "image"
+    if (info.menuItemId === 'cb_send_image_to_pages') {
+      const imageUrl = (info.srcUrl || '').trim();
+      if (!imageUrl) return;
+
+      await setPendingClip({
+        type: 'image',
+        imageUrl,
+        sourceUrl: tab?.url || '',
+        sourceTitle: tab?.title || '',
+        capturedAt: new Date().toISOString(),
+      });
+      await openSendWindow();
+      return;
+    }
+
+    let clip = {
+      type: 'text',
+      text: (info.selectionText || '').trim(),
+      sourceUrl: tab?.url || '',
+      sourceTitle: tab?.title || '',
+      capturedAt: new Date().toISOString(),
+    };
+
+    // Prefer getting selection text from content script (more accurate) if available.
+    if (tab?.id) {
+      try {
+        const resp = await chrome.tabs.sendMessage(tab.id, { action: 'CB_GET_SELECTION' });
+        if (resp?.text) clip = { ...clip, ...resp };
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!clip.text) return;
+    await setPendingClip(clip);
+    await openSendWindow();
+  } catch (e) {
+    console.error('Failed to open send window:', e);
+  }
 });
 
 // Message handler from popup
@@ -41,6 +124,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   else if (message.action === 'GET_RECORDING_DATA') {
     sendResponse({ data: recordingData });
+  }
+  // Clip + Send to Pages
+  else if (message.action === 'CB_SET_PENDING_CLIP') {
+    setPendingClip({
+      text: (message.text || '').toString(),
+      sourceUrl: message.sourceUrl || sender?.tab?.url || '',
+      sourceTitle: message.sourceTitle || sender?.tab?.title || '',
+      capturedAt: message.capturedAt || new Date().toISOString(),
+    })
+      .then(() => sendResponse({ success: true }))
+      .catch((e) => {
+        console.error('Failed to set pending clip:', e);
+        sendResponse({ success: false });
+      });
+  }
+  else if (message.action === 'CB_OPEN_SEND_FROM_PAGE') {
+    openSendWindow()
+      .then(() => sendResponse({ success: true }))
+      .catch((e) => {
+        console.error('Failed to open send window:', e);
+        sendResponse({ success: false });
+      });
   }
   
   return true; // Keep message channel open for async response
