@@ -1013,6 +1013,261 @@ const fixCreatorMembers = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get stored summary for a member
+ * @route   GET /api/sessions/:session_code/members/:user_code/summary
+ * @access  Public
+ */
+const getMemberSummary = async (req, res) => {
+  try {
+    const { session_code, user_code } = req.params;
+
+    const MemberSummary = require('../models/MemberSummary');
+    const summary = await MemberSummary.findOne({
+      session_code: session_code,
+      user_code: user_code.toUpperCase()
+    })
+      .populate('session', 'session_name session_description')
+      .populate('user', 'user_name user_code')
+      .lean();
+
+    if (!summary) {
+      return res.status(404).json({
+        success: false,
+        message: 'No summary found for this user in this session'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: summary.summary,
+        relevance_score: summary.relevance_score,
+        event_count: summary.event_count,
+        user_code: summary.user_code,
+        user_name: summary.user?.user_name || summary.user_code,
+        session_code: summary.session_code,
+        session_name: summary.session?.session_name || summary.session_code,
+        generated_at: summary.generated_at
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching member summary:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Summarize a member's navigation history using Gemini AI
+ * @route   POST /api/sessions/:session_code/members/:user_code/summarize
+ * @access  Public
+ */
+const summarizeMemberNavigation = async (req, res) => {
+  try {
+    const { session_code, user_code } = req.params;
+
+    // Get session info for context
+    const session = await Session.findOne({ session_code });
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
+    }
+    
+    const sessionName = session.session_name || session_code;
+    const sessionDescription = session.session_description || 'No description provided';
+    
+    // Get user info
+    const User = require('../models/User');
+    const user = await User.findOne({ user_code: user_code.toUpperCase() });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    const userName = user.user_name || user_code;
+
+    // Get all navigation tracking data for this user in this session
+    const NavigationTracking = require('../models/NavigationTracking');
+    const allTrackingData = await NavigationTracking.find({
+      session_code: session_code,
+      user_code: user_code.toUpperCase()
+    })
+      .select('navigation_events recording_started_at recording_ended_at is_active')
+      .sort({ recording_started_at: 1 })
+      .lean();
+
+    if (!allTrackingData || allTrackingData.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No navigation tracking data found for this user in this session'
+      });
+    }
+
+    // Combine all events from all tracking documents
+    const allEvents = [];
+    allTrackingData.forEach(tracking => {
+      if (tracking.navigation_events && tracking.navigation_events.length > 0) {
+        tracking.navigation_events.forEach(event => {
+          allEvents.push({
+            event_type: event.event_type,
+            timestamp: event.timestamp,
+            context: event.context
+          });
+        });
+      }
+    });
+
+    // Sort by timestamp
+    allEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    if (allEvents.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          summary: 'No navigation events found for this user in this session.'
+        }
+      });
+    }
+
+    // Format events for AI context - focus on navigation patterns, not just sites
+    const eventsText = allEvents.map((event, idx) => {
+      const time = new Date(event.timestamp).toLocaleString();
+      const eventType = event.event_type;
+      const url = event.context?.url || event.context?.full_url || '';
+      const title = event.context?.title || '';
+      const searchQuery = event.context?.query || event.context?.search_query || '';
+      
+      let line = `${idx + 1}. [${time}] ${eventType}`;
+      if (searchQuery) {
+        line += ` - Searched: "${searchQuery}"`;
+      }
+      if (title && url) {
+        line += ` - Visited: ${title}`;
+      } else if (url) {
+        line += ` - URL: ${url}`;
+      }
+      return line;
+    }).join('\n');
+
+    // Prepare prompt for Gemini - focus on research relevance
+    const prompt = `You are analyzing the browser navigation history for user "${userName}" in a research session.
+
+Session Topic/Description: "${sessionDescription}"
+
+Navigation History:
+${eventsText}
+
+Analyze this navigation history and provide:
+1. A summary of the user's research activities and navigation patterns (focus on what they were researching, not just listing websites)
+2. How closely their research aligns with the session topic/description
+3. A relevance score from 0-100 indicating how relevant their research is to the session topic (0 = completely unrelated, 100 = highly relevant)
+
+Format your response as JSON with the following structure:
+{
+  "summary": "2-3 paragraph summary focusing on research activities and patterns",
+  "relevance_score": <number between 0-100>,
+  "relevance_explanation": "Brief explanation of why this score was given"
+}
+
+Return ONLY valid JSON, no additional text.`;
+
+    // Initialize Gemini AI using @google/genai
+    const { GoogleGenAI } = require('@google/genai');
+    const apiKey = process.env.GEMINI_API_KEY;
+    
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        message: 'Gemini API key not configured. Please set GEMINI_API_KEY environment variable.'
+      });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: apiKey
+    });
+    
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+
+    const responseText = response.text || 'Unable to generate summary.';
+    
+    // Parse JSON response
+    let summaryData;
+    try {
+      // Extract JSON from response (might have markdown code blocks)
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        summaryData = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No JSON found in response');
+      }
+    } catch (parseError) {
+      // Fallback if JSON parsing fails
+      summaryData = {
+        summary: responseText,
+        relevance_score: null,
+        relevance_explanation: 'Could not parse relevance score from AI response'
+      };
+    }
+
+    // Save or update summary in database (overwrites existing summary)
+    const MemberSummary = require('../models/MemberSummary');
+    const summaryDoc = await MemberSummary.findOneAndUpdate(
+      {
+        session_code: session_code,
+        user_code: user_code.toUpperCase()
+      },
+      {
+        session: session._id,
+        user: user._id,
+        summary: summaryData.summary || responseText,
+        relevance_score: summaryData.relevance_score || null,
+        event_count: allEvents.length,
+        generated_at: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: summaryData.summary || responseText,
+        relevance_score: summaryData.relevance_score,
+        relevance_explanation: summaryData.relevance_explanation,
+        event_count: allEvents.length,
+        user_code: user_code.toUpperCase(),
+        user_name: userName,
+        session_code: session_code,
+        session_name: sessionName,
+        generated_at: summaryDoc.generated_at
+      }
+    });
+
+  } catch (error) {
+    console.error('Error summarizing member navigation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   createSession,
   getAllSessions,
@@ -1027,6 +1282,8 @@ module.exports = {
   validateSessionCode,
   getFullSessionData,
   getLiveUpdate,
-  fixCreatorMembers
+  fixCreatorMembers,
+  summarizeMemberNavigation,
+  getMemberSummary
 };
 

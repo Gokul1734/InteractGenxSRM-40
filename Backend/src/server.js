@@ -12,6 +12,7 @@ const usersRoutes = require('./routes/users');
 const sessionsRoutes = require('./routes/sessions');
 const invitationsRoutes = require('./routes/invitations');
 const pagesRoutes = require('./routes/pages');
+const teamAnalysisRoutes = require('./routes/teamAnalysis');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -47,6 +48,7 @@ app.use('/api/users', usersRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/invitations', invitationsRoutes);
 app.use('/api/pages', pagesRoutes);
+app.use('/api/team-analysis', teamAnalysisRoutes);
 
 // Health check
 app.get('/', (req, res) => res.send({ ok: true }));
@@ -56,4 +58,21 @@ app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  
+  // Start automatic team analysis service (runs every 1 minute)
+  if (process.env.MONGO_URI) {
+    const { processAllActiveSessions } = require('./services/teamAnalysisService');
+    
+    // Run immediately on startup
+    setTimeout(() => {
+      processAllActiveSessions();
+    }, 5000); // Wait 5 seconds for DB connection
+    
+    // Then run every 1 minute (60000 ms)
+    setInterval(() => {
+      processAllActiveSessions();
+    }, 60000);
+    
+    console.log('Team analysis service started (runs every 1 minute)');
+  }
 });

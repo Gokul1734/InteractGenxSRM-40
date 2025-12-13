@@ -14,7 +14,9 @@ const {
   validateSessionCode,
   getFullSessionData,
   getLiveUpdate,
-  fixCreatorMembers
+  fixCreatorMembers,
+  summarizeMemberNavigation,
+  getMemberSummary
 } = require('../controllers/sessionController');
 const {
   sendInvitation,
@@ -84,6 +86,14 @@ router.post('/:session_code/invitations', sendInvitation);
 // @route   GET /api/sessions/:session_code/invitations
 // @desc    Get all invitations for a session
 router.get('/:session_code/invitations', getSessionInvitations);
+
+// @route   GET /api/sessions/:session_code/members/:user_code/summary
+// @desc    Get stored summary for a member
+router.get('/:session_code/members/:user_code/summary', getMemberSummary);
+
+// @route   POST /api/sessions/:session_code/members/:user_code/summarize
+// @desc    Summarize a member's navigation history using Gemini AI
+router.post('/:session_code/members/:user_code/summarize', summarizeMemberNavigation);
 
 module.exports = router;
 

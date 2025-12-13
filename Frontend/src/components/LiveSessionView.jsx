@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { 
   ArrowLeft, Users, Clock, RefreshCw, Globe, 
   ExternalLink, Activity, Radio, User, Loader2,
-  Eye, ChevronDown, ChevronUp
+  Eye, ChevronDown, ChevronUp, Sparkles, X,
+  BookOpen, Brain
 } from 'lucide-react';
-import { sessionAPI } from '../services/api.js';
+import { sessionAPI, teamAnalysisAPI } from '../services/api.js';
 
-function MemberCard({ member, expanded, onToggle, memberNumber }) {
+function MemberCard({ member, expanded, onToggle, memberNumber, sessionCode, onSummarize, onViewSummary }) {
   const isRecording = member.is_recording === true; // Only show as recording if explicitly true
   // Use current_state from API (which now shows latest PAGE_LOADED event)
   const currentState = member.current_state;
@@ -151,13 +152,54 @@ function MemberCard({ member, expanded, onToggle, memberNumber }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span 
             className="text-sm"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             {member.event_count || 0} events
           </span>
+          {onSummarize && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                onSummarize(member.user_code);
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors hover:opacity-90"
+              style={{
+                background: 'var(--color-primary)',
+                border: '1px solid var(--color-primary-border)',
+                color: 'var(--color-text-primary)',
+                zIndex: 10,
+                position: 'relative',
+              }}
+              title="Generate AI summary"
+            >
+              <Sparkles size={12} />
+              Summarize
+            </button>
+          )}
+          {member.has_summary && onViewSummary && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                onViewSummary(member.user_code);
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors hover:opacity-90"
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-secondary)',
+                zIndex: 10,
+                position: 'relative',
+              }}
+              title="View stored summary"
+            >
+              View Summary
+            </button>
+          )}
           {expanded ? (
             <ChevronUp size={18} style={{ color: 'var(--color-text-tertiary)' }} />
           ) : (
@@ -220,7 +262,6 @@ function MemberCard({ member, expanded, onToggle, memberNumber }) {
         </div>
       )}
 
-
       {/* Expanded: Recent Events */}
       {expanded && recentEvents.length > 0 && (
         <div 
@@ -282,6 +323,45 @@ export default function LiveSessionView({ session, user, onBack }) {
   const intervalRef = useRef(null);
   // Accumulate all events across updates for each member
   const accumulatedEventsRef = useRef(new Map()); // Map<user_code, Event[]>
+  
+  // Summary state
+  const [summarizing, setSummarizing] = useState(false);
+  const [memberSummary, setMemberSummary] = useState(null);
+  const [summaryUserCode, setSummaryUserCode] = useState(null);
+  const [relevanceScore, setRelevanceScore] = useState(null);
+  const [memberSummaries, setMemberSummaries] = useState(new Map()); // Map<user_code, hasSummary>
+  const [analyzingTeam, setAnalyzingTeam] = useState(false);
+  const [teamAnalysisResult, setTeamAnalysisResult] = useState(null);
+  const [teamAnalysisData, setTeamAnalysisData] = useState(null);
+  const [showTeamSummary, setShowTeamSummary] = useState(false);
+  const [showTeamUnderstanding, setShowTeamUnderstanding] = useState(false);
+  const [loadingTeamAnalysis, setLoadingTeamAnalysis] = useState(false);
+
+  // Check for existing summaries
+  const checkSummaries = useCallback(async (membersToCheck = null) => {
+    if (!session?.session_code) return;
+    
+    try {
+      // Use provided members or fall back to liveData members
+      const members = membersToCheck || liveData?.members || [];
+      if (members.length === 0) return;
+      
+      const summaryChecks = members.map(member => 
+        sessionAPI.getMemberSummary(session.session_code, member.user_code)
+          .then(res => ({ user_code: member.user_code, hasSummary: res.success }))
+          .catch(() => ({ user_code: member.user_code, hasSummary: false }))
+      );
+      
+      const results = await Promise.all(summaryChecks);
+      const summaryMap = new Map();
+      results.forEach(r => {
+        summaryMap.set(r.user_code, r.hasSummary);
+      });
+      setMemberSummaries(summaryMap);
+    } catch (err) {
+      console.error('Failed to check summaries:', err);
+    }
+  }, [session?.session_code]);
 
   const fetchLiveData = useCallback(async () => {
     try {
@@ -324,7 +404,8 @@ export default function LiveSessionView({ session, user, onBack }) {
           return {
             ...member,
             all_accumulated_events: allEvents,
-            navigation_events: allEvents // Use accumulated events
+            navigation_events: allEvents, // Use accumulated events
+            has_summary: memberSummaries.get(userCode) || false
           };
         }) || [];
         
@@ -332,6 +413,11 @@ export default function LiveSessionView({ session, user, onBack }) {
           ...response,
           members: updatedMembers
         });
+        
+        // Check summaries when we get new member data
+        if (updatedMembers.length > 0) {
+          checkSummaries(updatedMembers);
+        }
         
         if (response.timestamp) {
           lastUpdateRef.current = response.timestamp;
@@ -344,7 +430,7 @@ export default function LiveSessionView({ session, user, onBack }) {
     } finally {
       setLoading(false);
     }
-  }, [session.session_code]);
+  }, [session.session_code, checkSummaries]);
 
   // Reset accumulated events when session changes
   useEffect(() => {
@@ -365,6 +451,13 @@ export default function LiveSessionView({ session, user, onBack }) {
     };
   }, [fetchLiveData, autoRefresh]);
 
+  // Check summaries when session changes or when liveData is populated
+  useEffect(() => {
+    if (session?.session_code && liveData?.members && liveData.members.length > 0) {
+      checkSummaries(liveData.members);
+    }
+  }, [session?.session_code, liveData?.members, checkSummaries]);
+
   const toggleMember = (userCode) => {
     setExpandedMembers(prev => {
       const next = new Set(prev);
@@ -376,6 +469,113 @@ export default function LiveSessionView({ session, user, onBack }) {
       return next;
     });
   };
+
+  const handleSummarize = async (userCode) => {
+    setSummarizing(true);
+    setError('');
+    try {
+      // Call the summarize endpoint - this will generate a new summary and overwrite any existing one in the database
+      const response = await sessionAPI.summarizeMember(session.session_code, userCode);
+      if (response.success && response.data) {
+        setMemberSummary(response.data.summary);
+        setSummaryUserCode(userCode);
+        setRelevanceScore(response.data.relevance_score || null);
+        // Update member summaries map to mark as having summary
+        setMemberSummaries(prev => {
+          const next = new Map(prev);
+          next.set(userCode, true);
+          return next;
+        });
+        // Refresh the members list to update has_summary flag
+        setTimeout(() => {
+          checkSummaries();
+          fetchLiveData();
+        }, 500);
+      } else {
+        setError(response.message || 'Failed to generate summary');
+      }
+    } catch (err) {
+      console.error('Error generating summary:', err);
+      setError(err.message || 'Failed to generate summary');
+    } finally {
+      setSummarizing(false);
+    }
+  };
+
+  const handleViewSummary = async (userCode) => {
+    setSummarizing(true);
+    setError('');
+    try {
+      const response = await sessionAPI.getMemberSummary(session.session_code, userCode);
+      if (response.success && response.data) {
+        setMemberSummary(response.data.summary);
+        setSummaryUserCode(userCode);
+        setRelevanceScore(response.data.relevance_score || null);
+      } else {
+        setError(response.message || 'No summary found for this member');
+        // If no summary found, clear the has_summary flag
+        setMemberSummaries(prev => {
+          const next = new Map(prev);
+          next.set(userCode, false);
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('Error loading summary:', err);
+      setError(err.message || 'Failed to load summary');
+      // Clear the has_summary flag on error
+      setMemberSummaries(prev => {
+        const next = new Map(prev);
+        next.set(userCode, false);
+        return next;
+      });
+    } finally {
+      setSummarizing(false);
+    }
+  };
+
+  const handleTeamAnalysis = async () => {
+    setAnalyzingTeam(true);
+    setError('');
+    setTeamAnalysisResult(null);
+    try {
+      const response = await teamAnalysisAPI.analyze(session.session_code);
+      if (response.success && response.data) {
+        setTeamAnalysisResult(response.data);
+        setTeamAnalysisData(response.data);
+      } else {
+        setError(response.message || 'Failed to analyze team session');
+      }
+    } catch (err) {
+      console.error('Error analyzing team session:', err);
+      setError(err.message || 'Failed to analyze team session');
+    } finally {
+      setAnalyzingTeam(false);
+    }
+  };
+
+  // Fetch existing team analysis data
+  const fetchTeamAnalysis = useCallback(async () => {
+    if (!session?.session_code) return;
+    
+    setLoadingTeamAnalysis(true);
+    try {
+      const response = await teamAnalysisAPI.get(session.session_code);
+      if (response.success && response.data) {
+        setTeamAnalysisData(response.data);
+      }
+    } catch (err) {
+      // Team analysis might not exist yet, that's okay
+      console.log('No team analysis found yet');
+    } finally {
+      setLoadingTeamAnalysis(false);
+    }
+  }, [session?.session_code]);
+
+  // Load team analysis on mount and when session changes
+  useEffect(() => {
+    fetchTeamAnalysis();
+  }, [fetchTeamAnalysis]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'N/A';
@@ -525,6 +725,67 @@ export default function LiveSessionView({ session, user, onBack }) {
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleTeamAnalysis}
+              disabled={analyzingTeam}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              style={{
+                background: 'var(--color-primary)',
+                border: '1px solid var(--color-primary-border)',
+                color: 'var(--color-text-primary)',
+              }}
+              title="Analyze team session and generate relevance scores"
+            >
+              {analyzingTeam ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={14} />
+                  Analyze Team
+                </>
+              )}
+            </button>
+            {teamAnalysisData && (
+              <>
+                {teamAnalysisData.team_summary && (
+                  <button
+                    onClick={() => setShowTeamSummary(true)}
+                    disabled={loadingTeamAnalysis}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                    style={{
+                      background: 'var(--color-surface)',
+                      border: '1px solid var(--color-border)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                    title="View team summary"
+                  >
+                    <BookOpen size={14} />
+                    Summary
+                  </button>
+                )}
+                {teamAnalysisData.team_understanding && (
+                  <button
+                    onClick={() => setShowTeamUnderstanding(true)}
+                    disabled={loadingTeamAnalysis}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                    style={{
+                      background: 'var(--color-surface)',
+                      border: '1px solid var(--color-border)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                    title="View team understanding"
+                  >
+                    <Brain size={14} />
+                    Understanding
+                  </button>
+                )}
+              </>
+            )}
+          </div>
           <button
             onClick={() => setAutoRefresh(!autoRefresh)}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -643,15 +904,25 @@ export default function LiveSessionView({ session, user, onBack }) {
           <div className="flex gap-6 items-start">
             {/* Left Column: Members List */}
             <div className="flex-1 min-w-0 space-y-4">
-              {members.map((member, index) => (
-                <MemberCard
-                  key={member.user_code}
-                  member={member}
-                  memberNumber={index + 1}
-                  expanded={expandedMembers.has(member.user_code)}
-                  onToggle={() => toggleMember(member.user_code)}
-                />
-              ))}
+              {members.map((member, index) => {
+                // Ensure has_summary is set from memberSummaries map
+                const memberWithSummary = {
+                  ...member,
+                  has_summary: memberSummaries.get(member.user_code) || member.has_summary || false
+                };
+                return (
+                  <MemberCard
+                    key={member.user_code}
+                    member={memberWithSummary}
+                    memberNumber={index + 1}
+                    expanded={expandedMembers.has(member.user_code)}
+                    onToggle={() => toggleMember(member.user_code)}
+                    sessionCode={session.session_code}
+                    onSummarize={handleSummarize}
+                    onViewSummary={handleViewSummary}
+                  />
+                );
+              })}
             </div>
 
             {/* Right Column: Visited Pages */}
@@ -776,6 +1047,318 @@ export default function LiveSessionView({ session, user, onBack }) {
           </div>
         )}
       </div>
+
+      {/* Summary Modal */}
+      {(memberSummary || summarizing) && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setMemberSummary(null);
+              setSummaryUserCode(null);
+            }
+          }}
+        >
+          <div 
+            className="w-full max-w-2xl rounded-2xl p-6 flex flex-col"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Sparkles size={20} style={{ color: 'var(--color-primary)' }} />
+                <h2 
+                  className="text-lg font-semibold"
+                  style={{ color: 'var(--color-text-title)' }}
+                >
+                  Activity Summary
+                </h2>
+              </div>
+              <button
+                onClick={() => {
+                  setMemberSummary(null);
+                  setSummaryUserCode(null);
+                }}
+                className="p-2 rounded-lg transition-colors"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            {summarizing ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 
+                  size={32} 
+                  className="animate-spin mb-3"
+                  style={{ color: 'var(--color-primary)' }}
+                />
+                <p style={{ color: 'var(--color-text-secondary)' }}>
+                  Generating summary...
+                </p>
+              </div>
+            ) : memberSummary ? (
+              <div className="flex-1 overflow-y-auto">
+                {summaryUserCode && (
+                  <div className="mb-4 pb-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                        Summary for: {members.find(m => m.user_code === summaryUserCode)?.user_name || summaryUserCode}
+                      </div>
+                      {relevanceScore !== null && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                            Relevance:
+                          </span>
+                          <span 
+                            className="text-xs font-semibold px-2 py-1 rounded"
+                            style={{
+                              background: relevanceScore >= 70 ? 'rgba(34, 197, 94, 0.15)' : 
+                                         relevanceScore >= 40 ? 'rgba(250, 204, 21, 0.15)' : 
+                                         'rgba(220, 38, 38, 0.15)',
+                              color: relevanceScore >= 70 ? 'var(--color-success-text)' : 
+                                     relevanceScore >= 40 ? 'var(--color-warning)' : 
+                                     'var(--color-error-text)',
+                            }}
+                          >
+                            {relevanceScore}/100
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div 
+                  className="text-sm leading-relaxed whitespace-pre-wrap mb-4"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
+                  {memberSummary}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Team Analysis Result Modal */}
+      {teamAnalysisResult && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setTeamAnalysisResult(null);
+            }
+          }}
+        >
+          <div 
+            className="w-full max-w-3xl rounded-2xl p-6 flex flex-col max-h-[90vh]"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Sparkles size={20} style={{ color: 'var(--color-primary)' }} />
+                <h2 
+                  className="text-lg font-semibold"
+                  style={{ color: 'var(--color-text-title)' }}
+                >
+                  Team Analysis Results
+                </h2>
+              </div>
+              <button
+                onClick={() => setTeamAnalysisResult(null)}
+                className="p-2 rounded-lg transition-colors"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto space-y-4">
+              {teamAnalysisResult.team_summary && (
+                <div>
+                  <h3 
+                    className="text-sm font-semibold mb-2"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    Team Understanding
+                  </h3>
+                  <div 
+                    className="text-sm leading-relaxed p-3 rounded-lg"
+                    style={{ 
+                      background: 'var(--color-surface-dark)',
+                      color: 'var(--color-text-primary)',
+                      whiteSpace: 'pre-wrap',
+                      wordWrap: 'break-word'
+                    }}
+                  >
+                    {teamAnalysisResult.team_summary ? (
+                      teamAnalysisResult.team_summary.split('\n\n').map((paragraph, idx) => (
+                        <p key={idx} className="mb-4 last:mb-0">
+                          {paragraph.trim()}
+                        </p>
+                      ))
+                    ) : (
+                      'No team summary available.'
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              <div>
+                <h3 
+                  className="text-sm font-semibold mb-2"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
+                  Analysis Stats
+                </h3>
+                <div className="flex gap-4 text-sm">
+                  <div>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>Total Sites: </span>
+                    <span style={{ color: 'var(--color-text-primary)' }}>{teamAnalysisResult.total_sites || 0}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>Analyzed: </span>
+                    <span style={{ color: 'var(--color-text-primary)' }}>{teamAnalysisResult.analyzed_sites || 0}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>Analysis Count: </span>
+                    <span style={{ color: 'var(--color-text-primary)' }}>{teamAnalysisResult.analysis_count || 0}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Team Summary Modal */}
+      {showTeamSummary && teamAnalysisData && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0, 0, 0, 0.5)' }}
+          onClick={() => setShowTeamSummary(false)}
+        >
+          <div 
+            className="rounded-2xl p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto flex flex-col"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <BookOpen size={20} style={{ color: 'var(--color-primary)' }} />
+                <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-title)' }}>
+                  Team Summary
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowTeamSummary(false)}
+                className="p-2 rounded-lg hover:bg-opacity-80 transition-colors"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-secondary)',
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div 
+              className="flex-1 text-sm leading-relaxed p-4 rounded-lg"
+              style={{ 
+                background: 'var(--color-surface-dark)',
+                color: 'var(--color-text-primary)',
+                whiteSpace: 'pre-wrap',
+                wordWrap: 'break-word'
+              }}
+            >
+              {teamAnalysisData.team_summary ? (
+                teamAnalysisData.team_summary.split('\n\n').map((paragraph, idx) => (
+                  <p key={idx} className="mb-4 last:mb-0">
+                    {paragraph.trim()}
+                  </p>
+                ))
+              ) : (
+                'No team summary available yet.'
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Team Understanding Modal */}
+      {showTeamUnderstanding && teamAnalysisData && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0, 0, 0, 0.5)' }}
+          onClick={() => setShowTeamUnderstanding(false)}
+        >
+          <div 
+            className="rounded-2xl p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto flex flex-col"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Brain size={20} style={{ color: 'var(--color-primary)' }} />
+                <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-title)' }}>
+                  Team Understanding
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowTeamUnderstanding(false)}
+                className="p-2 rounded-lg hover:bg-opacity-80 transition-colors"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-secondary)',
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div 
+              className="flex-1 text-sm leading-relaxed p-4 rounded-lg"
+              style={{ 
+                background: 'var(--color-surface-dark)',
+                color: 'var(--color-text-primary)',
+                whiteSpace: 'pre-wrap',
+                wordWrap: 'break-word'
+              }}
+            >
+              {teamAnalysisData.team_understanding ? (
+                teamAnalysisData.team_understanding.split('\n\n').map((paragraph, idx) => (
+                  <p key={idx} className="mb-4 last:mb-0">
+                    {paragraph.trim()}
+                  </p>
+                ))
+              ) : (
+                'No team understanding available yet.'
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

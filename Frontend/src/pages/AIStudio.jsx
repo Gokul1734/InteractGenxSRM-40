@@ -10,7 +10,7 @@ import {
   RefreshCw,
   Sparkles
 } from 'lucide-react';
-import { sessionAPI, pagesAPI } from '../services/api.js';
+import { sessionAPI, pagesAPI, teamAnalysisAPI } from '../services/api.js';
 
 export default function AIStudio({ user }) {
   // Session selection
@@ -87,8 +87,26 @@ export default function AIStudio({ user }) {
     setError('');
     
     try {
-      const response = await sessionAPI.getFull(selectedSession.session_code);
-      const sessionData = response.data || response; // Handle both response formats
+      // Fetch session data and team analysis in parallel
+      const [sessionResponse, teamAnalysisResponse] = await Promise.all([
+        sessionAPI.getFull(selectedSession.session_code),
+        teamAnalysisAPI.get(selectedSession.session_code).catch(() => null), // Team analysis is optional
+      ]);
+      
+      const sessionData = sessionResponse.data || sessionResponse; // Handle both response formats
+      
+      // Create a map of URL to relevance data from team analysis
+      const relevanceMap = new Map();
+      if (teamAnalysisResponse?.data?.sites) {
+        teamAnalysisResponse.data.sites.forEach(site => {
+          if (site.url) {
+            relevanceMap.set(site.url, {
+              relevance_score: site.relevance_score,
+              relevance_explanation: site.relevance_explanation,
+            });
+          }
+        });
+      }
       
       // Extract unique URLs from navigation events from ALL members in the session
       const urlSet = new Set();
@@ -106,6 +124,7 @@ export default function AIStudio({ user }) {
                   try {
                     const urlObj = new URL(url);
                     const domain = urlObj.hostname;
+                    const relevanceData = relevanceMap.get(url) || {};
                     websiteList.push({
                       url,
                       domain,
@@ -113,6 +132,8 @@ export default function AIStudio({ user }) {
                       timestamp: event.timestamp,
                       user_code: member.user_code,
                       user_name: member.user_name || member.user_code,
+                      relevance_score: relevanceData.relevance_score ?? null,
+                      relevance_explanation: relevanceData.relevance_explanation || null,
                     });
                   } catch {
                     // Invalid URL, skip
@@ -124,8 +145,17 @@ export default function AIStudio({ user }) {
         });
       }
       
-      // Sort by timestamp (most recent first)
-      websiteList.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      // Sort by relevance_score (highest first), then by timestamp (most recent first) for sites without scores
+      websiteList.sort((a, b) => {
+        // Sites with relevance scores come first
+        if (a.relevance_score !== null && b.relevance_score !== null) {
+          return b.relevance_score - a.relevance_score; // Descending order
+        }
+        if (a.relevance_score !== null) return -1; // a has score, b doesn't
+        if (b.relevance_score !== null) return 1;  // b has score, a doesn't
+        // Both don't have scores, sort by timestamp
+        return new Date(b.timestamp) - new Date(a.timestamp);
+      });
       
       setWebsites(websiteList);
     } catch (err) {
@@ -513,8 +543,37 @@ export default function AIStudio({ user }) {
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
-                            {website.title}
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
+                              {website.title}
+                            </div>
+                            {website.relevance_score !== null && (
+                              <div 
+                                className="text-xs px-2 py-0.5 rounded font-medium flex-shrink-0"
+                                style={{
+                                  background: website.relevance_score >= 70 
+                                    ? 'rgba(34, 197, 94, 0.2)' 
+                                    : website.relevance_score >= 40 
+                                    ? 'rgba(250, 204, 21, 0.2)' 
+                                    : 'rgba(239, 68, 68, 0.2)',
+                                  color: website.relevance_score >= 70 
+                                    ? 'rgb(34, 197, 94)' 
+                                    : website.relevance_score >= 40 
+                                    ? 'rgb(250, 204, 21)' 
+                                    : 'rgb(239, 68, 68)',
+                                  border: `1px solid ${
+                                    website.relevance_score >= 70 
+                                      ? 'rgba(34, 197, 94, 0.3)' 
+                                      : website.relevance_score >= 40 
+                                      ? 'rgba(250, 204, 21, 0.3)' 
+                                      : 'rgba(239, 68, 68, 0.3)'
+                                  }`,
+                                }}
+                                title={website.relevance_explanation || `Relevance: ${website.relevance_score}/100`}
+                              >
+                                {website.relevance_score}
+                              </div>
+                            )}
                           </div>
                           <div className="text-xs truncate" style={{ color: 'var(--color-text-tertiary)' }}>
                             {website.domain}

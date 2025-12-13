@@ -186,6 +186,34 @@ export const sessionAPI = {
       method: 'DELETE',
     });
   },
+
+  // Summarize member navigation history
+  summarizeMember: async (sessionCode, userCode) => {
+    return apiRequest(`/sessions/${sessionCode}/members/${userCode}/summarize`, {
+      method: 'POST',
+    });
+  },
+
+  // Get stored summary for a member
+  getMemberSummary: async (sessionCode, userCode) => {
+    return apiRequest(`/sessions/${sessionCode}/members/${userCode}/summary`);
+  },
+};
+
+// ==================== TEAM ANALYSIS APIs ====================
+
+export const teamAnalysisAPI = {
+  // Trigger team session analysis
+  analyze: async (sessionCode) => {
+    return apiRequest(`/team-analysis/${sessionCode}/analyze`, {
+      method: 'POST',
+    });
+  },
+
+  // Get team session analysis
+  get: async (sessionCode) => {
+    return apiRequest(`/team-analysis/${sessionCode}`);
+  },
 };
 
 // ==================== INVITATION APIs ====================
@@ -334,5 +362,6 @@ export default {
   session: sessionAPI,
   invitation: invitationAPI,
   tracking: trackingAPI,
+  teamAnalysis: teamAnalysisAPI,
 };
 
