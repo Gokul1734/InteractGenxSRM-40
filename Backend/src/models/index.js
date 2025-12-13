@@ -4,6 +4,7 @@ const NavigationTracking = require('./NavigationTracking');
 const SessionInvitation = require('./SessionInvitation');
 const TeamPage = require('./TeamPage');
 const PrivatePage = require('./PrivatePage');
+const Callout = require('./Callout');
 
 module.exports = {
   User,
@@ -12,5 +13,6 @@ module.exports = {
   SessionInvitation,
   TeamPage,
   PrivatePage,
+  Callout,
 };
 

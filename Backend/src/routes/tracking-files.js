@@ -114,16 +114,16 @@ router.post('/update', async (req, res) => {
 
     // Prepare update data
     const navigationEvents = data.navigation_events || [];
-    const eventCount = navigationEvents.length;
-    const updateData = {
-      navigation_events: navigationEvents,
-      event_count: eventCount
-    };
+    const incomingEventCount = navigationEvents.length;
     
     // If recording_ended_at is provided, also set is_active to false
     if (data.recording_ended_at) {
-      updateData.recording_ended_at = data.recording_ended_at;
-      updateData.is_active = false;
+      const updateData = {
+        navigation_events: navigationEvents,
+        event_count: incomingEventCount,
+        recording_ended_at: data.recording_ended_at,
+        is_active: false
+      };
       
       // When stopping, update the document regardless of is_active status
       // (in case it was already stopped by the /stop endpoint)
@@ -142,19 +142,25 @@ router.post('/update', async (req, res) => {
       
       // If tracking document exists, continue with linking logic
       if (tracking) {
+        // Find user and session for linking if needed
+        const [user, session] = await Promise.all([
+          User.findOne({ user_code: normalizedUserCode }),
+          Session.findOne({ session_code: normalizedSessionCode })
+        ]);
+        
         // Link tracking to session member using atomic operation
         if (user && session) {
           await session.updateMemberTracking(normalizedUserCode, tracking._id);
         }
         
-        console.log(`✓ LIVE UPDATE (STOPPING): ${normalizedUserCode}_${normalizedSessionCode} → ${eventCount} events`);
+        console.log(`✓ LIVE UPDATE (STOPPING): ${normalizedUserCode}_${normalizedSessionCode} → ${incomingEventCount} events`);
         
         res.status(200).json({
           success: true,
           message: 'Data updated live',
           data: {
             folder: `${normalizedUserCode}_${normalizedSessionCode}`,
-            event_count: eventCount,
+            event_count: incomingEventCount,
             updated_at: new Date().toISOString()
           }
         });
@@ -174,38 +180,92 @@ router.post('/update', async (req, res) => {
       return;
     }
 
-    // Use atomic findOneAndUpdate with upsert for concurrency safety
-    // This prevents race conditions when multiple users are updating simultaneously
-    // Only update if is_active is true (don't update stopped recordings)
-    const tracking = await NavigationTracking.findOneAndUpdate(
-      {
-        user_code: normalizedUserCode,
-        session_code: normalizedSessionCode,
-        is_active: true
-      },
-      {
-        $set: updateData,
-        $setOnInsert: {
-          user_code: normalizedUserCode,
-          session_code: normalizedSessionCode,
-          recording_started_at: data.recording_started_at || new Date(),
-          is_active: true
-        }
-      },
-      { 
-        new: true, 
-        upsert: true,
-        setDefaultsOnInsert: true
-      }
-    );
-
-    // If this was a new tracking document (upserted), link it to the session member
-    // Check if tracking was just created by comparing recording_started_at
-    const wasJustCreated = tracking.navigation_events.length === eventCount && 
-                           eventCount > 0 && 
-                           !tracking.user && !tracking.session;
+    // For active recordings, use a safer merge strategy to prevent race conditions
+    // Strategy: Fetch current document, merge events (prefer incoming if more events or newer),
+    // then update atomically using optimistic locking with event count check
     
-    if (wasJustCreated || !tracking.user || !tracking.session) {
+    let tracking = await NavigationTracking.findOne({
+      user_code: normalizedUserCode,
+      session_code: normalizedSessionCode,
+      is_active: true
+    });
+    
+    if (!tracking) {
+      // Create new tracking document if it doesn't exist
+      tracking = await NavigationTracking.findOneAndUpdate(
+        {
+          user_code: normalizedUserCode,
+          session_code: normalizedSessionCode
+        },
+        {
+          $setOnInsert: {
+            user_code: normalizedUserCode,
+            session_code: normalizedSessionCode,
+            recording_started_at: data.recording_started_at || new Date(),
+            navigation_events: navigationEvents,
+            event_count: incomingEventCount,
+            is_active: true
+          }
+        },
+        { 
+          new: true, 
+          upsert: true,
+          setDefaultsOnInsert: true
+        }
+      );
+    } else {
+      // Merge events: Use the incoming events if they have more events (more complete),
+      // or if they have the same count but are newer (based on latest timestamp)
+      const currentEventCount = tracking.navigation_events.length;
+      const currentLatestTimestamp = tracking.navigation_events.length > 0
+        ? new Date(tracking.navigation_events[tracking.navigation_events.length - 1].timestamp).getTime()
+        : 0;
+      const incomingLatestTimestamp = navigationEvents.length > 0
+        ? new Date(navigationEvents[navigationEvents.length - 1].timestamp).getTime()
+        : 0;
+      
+      // Use incoming events if:
+      // 1. It has more events (more complete data)
+      // 2. It has the same number of events but newer latest timestamp
+      // 3. Current has no events (initial state)
+      const shouldUseIncoming = 
+        incomingEventCount > currentEventCount ||
+        (incomingEventCount === currentEventCount && incomingLatestTimestamp >= currentLatestTimestamp) ||
+        currentEventCount === 0;
+      
+      if (shouldUseIncoming) {
+        // Update with incoming events (more complete or newer)
+        tracking = await NavigationTracking.findOneAndUpdate(
+          {
+            _id: tracking._id,
+            is_active: true
+          },
+          {
+            $set: {
+              navigation_events: navigationEvents,
+              event_count: incomingEventCount
+            }
+          },
+          { 
+            new: true
+          }
+        );
+      } else {
+        // Incoming data is older/incomplete, keep current data
+        // But still log the update attempt
+        console.log(`⚠ UPDATE SKIPPED (older data): ${normalizedUserCode}_${normalizedSessionCode} - Current: ${currentEventCount} events, Incoming: ${incomingEventCount} events`);
+      }
+    }
+    
+    if (!tracking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tracking document not found or not active'
+      });
+    }
+
+    // Link user and session references if not already linked
+    if (!tracking.user || !tracking.session) {
       // Find user and session for linking (only if not already linked)
       const [user, session] = await Promise.all([
         !tracking.user ? User.findOne({ user_code: normalizedUserCode }) : null,
@@ -220,23 +280,38 @@ router.post('/update', async (req, res) => {
         
         if (Object.keys(linkUpdate).length > 0) {
           await NavigationTracking.findByIdAndUpdate(tracking._id, { $set: linkUpdate });
+          // Update local reference
+          if (user) tracking.user = user._id;
+          if (session) tracking.session = session._id;
         }
       }
 
       // Link tracking to session member using atomic operation
-      if (user && session) {
+      const [userForSession, sessionForMember] = await Promise.all([
+        tracking.user ? User.findById(tracking.user) : User.findOne({ user_code: normalizedUserCode }),
+        tracking.session ? Session.findById(tracking.session) : Session.findOne({ session_code: normalizedSessionCode })
+      ]);
+      
+      if (userForSession && sessionForMember) {
+        await sessionForMember.updateMemberTracking(normalizedUserCode, tracking._id);
+      }
+    } else {
+      // Ensure session member tracking reference is up to date
+      const session = await Session.findById(tracking.session);
+      if (session) {
         await session.updateMemberTracking(normalizedUserCode, tracking._id);
       }
     }
 
-    console.log(`✓ LIVE: ${normalizedUserCode}_${normalizedSessionCode} → ${eventCount} events`);
+    const finalEventCount = tracking.navigation_events.length;
+    console.log(`✓ LIVE: ${normalizedUserCode}_${normalizedSessionCode} → ${finalEventCount} events`);
 
     res.status(200).json({
       success: true,
       message: 'Data updated live',
       data: {
         folder: `${normalizedUserCode}_${normalizedSessionCode}`,
-        event_count: eventCount,
+        event_count: finalEventCount,
         updated_at: new Date().toISOString()
       }
     });

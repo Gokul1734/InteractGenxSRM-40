@@ -16,13 +16,17 @@ let retryAttempts = 0;
 let maxRetries = 5;
 let baseRetryDelay = 1000; // Start with 1 second
 
-// Initialize extension
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('Browser Navigation Tracker installed');
-  addEvent('EXTENSION_LOADED', {});
+// Callout polling state
+let calloutPollInterval = null;
+let lastCalloutTimestamp = null;
+let seenCalloutIds = new Set(); // Track callouts we've already shown
 
-  // Context menu for sending selected text to Pages
+// Initialize context menus (called on install and startup)
+async function initializeContextMenus() {
   try {
+    // Remove existing menus first to avoid duplicates
+    await chrome.contextMenus.removeAll();
+    
     chrome.contextMenus.create({
       id: 'cb_send_to_pages',
       title: 'Send selection to CoBrowser Pages',
@@ -36,7 +40,77 @@ chrome.runtime.onInstalled.addListener(() => {
   } catch (e) {
     console.warn('Failed to create context menu:', e);
   }
+}
+
+// Restore recording state from storage (called on service worker startup)
+async function restoreRecordingState() {
+  try {
+    const result = await chrome.storage.local.get([
+      'user_code',
+      'session_code',
+      'is_recording'
+    ]);
+
+    if (result.is_recording && result.user_code && result.session_code) {
+      console.log('🔄 Restoring recording state from storage');
+      console.log(`   User: ${result.user_code}, Session: ${result.session_code}`);
+      
+      const normalizedUserCode = String(result.user_code).toUpperCase();
+      const normalizedSessionCode = String(result.session_code);
+      
+      // Restore recording state
+      isRecording = true;
+      recordingData = {
+        user_code: normalizedUserCode,
+        session_code: normalizedSessionCode,
+        recording_started_at: new Date().toISOString(), // Will be updated on next save
+        recording_ended_at: null,
+        navigation_events: []
+      };
+      
+      // Mark that we're resuming (not starting fresh)
+      addEvent('EXTENSION_RESUMED', {
+        restored_from_storage: true
+      });
+      
+      // Restart callout polling
+      startCalloutPolling(normalizedUserCode, normalizedSessionCode);
+      
+      console.log('✓ Recording state restored - tracking resumed');
+    } else {
+      console.log('ℹ No active recording to restore');
+    }
+  } catch (error) {
+    console.error('Error restoring recording state:', error);
+  }
+}
+
+// Initialize extension on install/update
+chrome.runtime.onInstalled.addListener(async () => {
+  console.log('📦 Browser Navigation Tracker installed/updated');
+  await initializeContextMenus();
+  
+  // Only add EXTENSION_LOADED event if we're actually recording
+  if (isRecording) {
+    addEvent('EXTENSION_LOADED', {});
+  }
 });
+
+// Initialize extension on browser/Chrome startup
+chrome.runtime.onStartup.addListener(async () => {
+  console.log('🚀 Browser Navigation Tracker - Browser startup detected');
+  await initializeContextMenus();
+  await restoreRecordingState();
+});
+
+// Also restore state when service worker wakes up (Manifest V3)
+// This runs immediately when the service worker script loads
+(async () => {
+  console.log('⚡ Browser Navigation Tracker - Service Worker starting');
+  await initializeContextMenus();
+  await restoreRecordingState();
+  console.log('✓ Service Worker initialized');
+})();
 
 // Pending clip payload is stored in session storage so it survives service worker suspension.
 const PENDING_CLIP_KEY = 'cb_pending_clip';
@@ -130,6 +204,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message.action === 'GET_RECORDING_DATA') {
     sendResponse({ data: recordingData });
   }
+  // Callout functionality
+  else if (message.action === 'CREATE_CALLOUT') {
+    (async () => {
+      try {
+        const result = await createCallout(message.user_code, message.session_code, message.message);
+        console.log('Sending callout response:', result);
+        sendResponse(result);
+      } catch (error) {
+        console.error('Error in CREATE_CALLOUT handler:', error);
+        sendResponse({ success: false, error: error.message || 'Unknown error' });
+      }
+    })();
+  }
+  // Acknowledge callout
+  else if (message.action === 'CB_ACKNOWLEDGE_CALLOUT') {
+    (async () => {
+      try {
+        if (recordingData) {
+          const result = await acknowledgeCallout(
+            message.callout_id,
+            recordingData.user_code,
+            recordingData.user_name || recordingData.user_code
+          );
+          sendResponse(result);
+        } else {
+          sendResponse({ success: false, error: 'Not recording' });
+        }
+      } catch (error) {
+        console.error('Error acknowledging callout:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+  }
   // Clip + Send to Pages
   else if (message.action === 'CB_SET_PENDING_CLIP') {
     setPendingClip({
@@ -154,6 +261,327 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   
   return true; // Keep message channel open for async response
+});
+
+// ============================================================================
+// CALLOUT FUNCTIONALITY
+// ============================================================================
+
+/**
+ * Create a callout for the current active tab
+ * Captures: URL, title, scroll position, selected text
+ */
+async function createCallout(userCode, sessionCode, message = '') {
+  console.log('📢 Creating callout...', { userCode, sessionCode, message });
+  
+  try {
+    // Get the current active tab
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const activeTab = tabs && tabs.length > 0 ? tabs[0] : null;
+    
+    if (!activeTab) {
+      console.error('No active tab found');
+      return { success: false, error: 'No active tab found' };
+    }
+
+    console.log('Active tab:', activeTab.url);
+
+    // Skip internal Chrome pages
+    if (activeTab.url.startsWith('chrome://') || 
+        activeTab.url.startsWith('chrome-extension://') ||
+        activeTab.url.startsWith('about:')) {
+      return { success: false, error: 'Cannot create callout on browser internal pages' };
+    }
+
+    // Try to get scroll position and selected text from content script
+    let scrollPosition = { x: 0, y: 0, y_percentage: 0 };
+    let selectedText = null;
+
+    try {
+      const contentData = await chrome.tabs.sendMessage(activeTab.id, { 
+        action: 'CB_GET_PAGE_DATA' 
+      });
+      
+      if (contentData) {
+        scrollPosition = contentData.scrollPosition || scrollPosition;
+        selectedText = contentData.selectedText || null;
+      }
+      console.log('Content data received:', { scrollPosition, selectedText: !!selectedText });
+    } catch (e) {
+      // Content script might not be loaded on some pages
+      console.warn('Could not get page data from content script:', e.message);
+    }
+
+    // Prepare callout data
+    const calloutData = {
+      session_code: sessionCode,
+      user_code: userCode.toUpperCase(),
+      page_url: activeTab.url,
+      page_title: activeTab.title || '',
+      page_favicon: activeTab.favIconUrl || '',
+      scroll_position: scrollPosition,
+      selected_text: selectedText,
+      message: message || '',
+      tab_context: {
+        tab_id: activeTab.id,
+        window_id: activeTab.windowId
+      }
+    };
+
+    console.log('Sending callout to API:', `${API_ROOT}/callouts`);
+
+    // Send to backend API with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
+    const response = await fetch(`${API_ROOT}/callouts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(calloutData),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error('API error:', response.status, errorText);
+      return { success: false, error: `Server error: ${response.status}` };
+    }
+
+    const result = await response.json();
+    console.log('API response:', result);
+
+    if (result.success) {
+      console.log('✓ Callout created:', result.data._id);
+      
+      // Also add as an event in tracking (if recording)
+      if (isRecording && recordingData) {
+        addEvent('CALLOUT_CREATED', {
+          callout_id: result.data._id,
+          page_url: calloutData.page_url,
+          page_title: calloutData.page_title,
+          message: calloutData.message,
+          has_selection: !!selectedText
+        });
+      }
+      
+      return { success: true, data: result.data };
+    } else {
+      console.error('API returned failure:', result.message);
+      return { success: false, error: result.message || 'Failed to create callout' };
+    }
+
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.error('Callout request timed out');
+      return { success: false, error: 'Request timed out. Please try again.' };
+    }
+    console.error('Error creating callout:', error);
+    return { success: false, error: error.message || 'Unknown error occurred' };
+  }
+}
+
+// ============================================================================
+// CALLOUT POLLING & NOTIFICATIONS
+// ============================================================================
+
+/**
+ * Start polling for new callouts in the session
+ */
+function startCalloutPolling(userCode, sessionCode) {
+  // Stop any existing polling
+  stopCalloutPolling();
+  
+  console.log('📢 Starting callout polling for session:', sessionCode);
+  
+  // Reset state
+  lastCalloutTimestamp = new Date().toISOString();
+  seenCalloutIds.clear();
+  
+  // Poll immediately, then every 5 seconds
+  pollForCallouts(userCode, sessionCode);
+  
+  calloutPollInterval = setInterval(() => {
+    pollForCallouts(userCode, sessionCode);
+  }, 5000); // Poll every 5 seconds
+}
+
+/**
+ * Stop callout polling
+ */
+function stopCalloutPolling() {
+  if (calloutPollInterval) {
+    clearInterval(calloutPollInterval);
+    calloutPollInterval = null;
+    console.log('📢 Stopped callout polling');
+  }
+}
+
+/**
+ * Poll for new callouts and notify user
+ */
+async function pollForCallouts(userCode, sessionCode) {
+  if (!isRecording || !sessionCode) return;
+  
+  try {
+    // Build URL with query params
+    const params = new URLSearchParams({
+      exclude_user: userCode.toUpperCase(),
+      since: lastCalloutTimestamp
+    });
+    
+    const response = await fetch(
+      `${API_ROOT}/callouts/session/${sessionCode}/active?${params}`,
+      { method: 'GET' }
+    );
+    
+    if (!response.ok) {
+      console.warn('Callout poll failed:', response.status);
+      return;
+    }
+    
+    const result = await response.json();
+    
+    if (result.success && result.data && result.data.length > 0) {
+      // Update timestamp for next poll
+      lastCalloutTimestamp = result.timestamp || new Date().toISOString();
+      
+      // Process new callouts
+      for (const callout of result.data) {
+        // Skip if we've already seen this callout
+        if (seenCalloutIds.has(callout._id)) continue;
+        
+        // Mark as seen
+        seenCalloutIds.add(callout._id);
+        
+        console.log('📢 New callout detected:', callout._id, 'from', callout.user_name);
+        
+        // Show notification to user
+        await showCalloutNotificationToUser(callout);
+      }
+    }
+  } catch (error) {
+    console.warn('Error polling for callouts:', error.message);
+  }
+}
+
+/**
+ * Show callout notification to user via content script
+ */
+async function showCalloutNotificationToUser(callout) {
+  try {
+    // Get all tabs to notify
+    const tabs = await chrome.tabs.query({});
+    
+    // Find the active tab in the focused window
+    const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const activeTab = activeTabs[0];
+    
+    // First, try to show on the active tab
+    if (activeTab && !activeTab.url.startsWith('chrome://') && !activeTab.url.startsWith('chrome-extension://')) {
+      try {
+        await chrome.tabs.sendMessage(activeTab.id, {
+          action: 'CB_SHOW_CALLOUT_NOTIFICATION',
+          callout: callout
+        });
+        console.log('📢 Notification sent to active tab:', activeTab.id);
+        return; // Success, don't show on other tabs
+      } catch (e) {
+        console.warn('Could not send to active tab:', e.message);
+      }
+    }
+    
+    // Fallback: try other tabs
+    for (const tab of tabs) {
+      if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+        try {
+          await chrome.tabs.sendMessage(tab.id, {
+            action: 'CB_SHOW_CALLOUT_NOTIFICATION',
+            callout: callout
+          });
+          console.log('📢 Notification sent to tab:', tab.id);
+          return; // Success
+        } catch (e) {
+          // Content script not loaded on this tab, try next
+        }
+      }
+    }
+    
+    // If all else fails, use Chrome notification API
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icon.svg',
+      title: `📢 Callout from ${callout.user_name}`,
+      message: callout.message || `Check out: ${callout.page_title || callout.page_url}`,
+      priority: 2,
+      requireInteraction: true
+    }, (notificationId) => {
+      // Store callout data for when notification is clicked
+      chrome.storage.local.set({
+        [`notification_${notificationId}`]: callout
+      });
+    });
+    
+  } catch (error) {
+    console.error('Error showing callout notification:', error);
+  }
+}
+
+/**
+ * Acknowledge a callout
+ */
+async function acknowledgeCallout(calloutId, userCode, userName) {
+  try {
+    const response = await fetch(`${API_ROOT}/callouts/${calloutId}/acknowledge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_code: userCode,
+        user_name: userName
+      })
+    });
+    
+    const result = await response.json();
+    console.log('Callout acknowledged:', result.success);
+    return result;
+  } catch (error) {
+    console.error('Error acknowledging callout:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Handle Chrome notification click
+chrome.notifications.onClicked.addListener(async (notificationId) => {
+  try {
+    const data = await chrome.storage.local.get([`notification_${notificationId}`]);
+    const callout = data[`notification_${notificationId}`];
+    
+    if (callout && callout.page_url) {
+      // Open the callout URL in a new tab
+      const tab = await chrome.tabs.create({ url: callout.page_url });
+      
+      // After a delay, scroll to position
+      setTimeout(async () => {
+        try {
+          await chrome.tabs.sendMessage(tab.id, {
+            action: 'CB_NAVIGATE_TO_CALLOUT',
+            callout: callout
+          });
+        } catch (e) {
+          // Content script might not be ready yet
+        }
+      }, 2000);
+      
+      // Clean up stored data
+      chrome.storage.local.remove([`notification_${notificationId}`]);
+    }
+    
+    // Close the notification
+    chrome.notifications.clear(notificationId);
+  } catch (error) {
+    console.error('Error handling notification click:', error);
+  }
 });
 
 // ============================================================================
@@ -222,6 +650,9 @@ async function startRecording(userCode, sessionCode) {
   
   // Initial save when starting
   scheduleAutoSave();
+  
+  // Start polling for callouts from team members
+  startCalloutPolling(normalizedUserCode, normalizedSessionCode);
 }
 
 // Capture all currently open tabs when recording starts
@@ -485,6 +916,9 @@ async function stopRecording() {
   console.log('Stopping recording');
   
   isRecording = false;
+  
+  // Stop callout polling
+  stopCalloutPolling();
   
   if (recordingData) {
     recordingData.recording_ended_at = new Date().toISOString();
