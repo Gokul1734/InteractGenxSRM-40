@@ -7,12 +7,14 @@ const sessionCodeInput = document.getElementById('sessionCode');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const statusDisplay = document.getElementById('statusDisplay');
-const inputSection = document.getElementById('inputSection');
-const autoSaveInfo = document.getElementById('autoSaveInfo');
-const filenameDisplay = document.getElementById('filename');
 const validationError = document.getElementById('validationError');
 const errorMessage = document.getElementById('errorMessage');
 const dashboardLink = document.getElementById('dashboardLink');
+const sessionInfoSection = document.getElementById('sessionInfoSection');
+const sessionName = document.getElementById('sessionName');
+const memberList = document.getElementById('memberList');
+
+// API_ROOT is already available from config.js
 
 // Initialize popup state
 document.addEventListener('DOMContentLoaded', async () => {
@@ -27,8 +29,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   
   // Hide validation error when user starts typing
-  userCodeInput.addEventListener('input', hideValidationError);
-  sessionCodeInput.addEventListener('input', hideValidationError);
+  userCodeInput.addEventListener('input', () => {
+    hideValidationError();
+    hideSessionInfo();
+  });
+  
+  sessionCodeInput.addEventListener('input', () => {
+    hideValidationError();
+    // Auto-fetch session info when session code is entered
+    const sessionCode = sessionCodeInput.value.trim().toUpperCase();
+    if (sessionCode.length === 7) {
+      loadSessionInfo(sessionCode);
+    } else {
+      hideSessionInfo();
+    }
+  });
+
+  // Limit input to 7 characters and uppercase
+  userCodeInput.addEventListener('input', (e) => {
+    e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+  });
+
+  sessionCodeInput.addEventListener('input', (e) => {
+    e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+  });
 });
 
 // Load current recording state
@@ -46,6 +70,10 @@ async function loadState() {
     }
     if (result.session_code) {
       sessionCodeInput.value = result.session_code;
+      // Load session info if session code exists
+      if (result.session_code.length === 7) {
+        loadSessionInfo(result.session_code);
+      }
     }
 
     // Update UI based on recording state
@@ -63,7 +91,7 @@ function updateUI(isRecording, count = 0) {
   hideValidationError();
   
   // Reset start button text
-  startBtn.textContent = 'Start Recording';
+  startBtn.textContent = 'Start';
   
   if (isRecording) {
     // Recording is ON
@@ -78,12 +106,6 @@ function updateUI(isRecording, count = 0) {
     
     userCodeInput.disabled = true;
     sessionCodeInput.disabled = true;
-    
-    // Show auto-save info
-    autoSaveInfo.classList.remove('hidden');
-    const userCode = userCodeInput.value;
-    const sessionCode = sessionCodeInput.value;
-    filenameDisplay.textContent = `Backend/tracking-data/${userCode}_${sessionCode}/data.json`;
   } else {
     // Recording is OFF
     statusDisplay.innerHTML = `
@@ -97,9 +119,6 @@ function updateUI(isRecording, count = 0) {
     
     userCodeInput.disabled = false;
     sessionCodeInput.disabled = false;
-    
-    // Hide auto-save info
-    autoSaveInfo.classList.add('hidden');
   }
 }
 
@@ -118,6 +137,84 @@ async function validateCodes(userCode, sessionCode) {
       errors: ['Backend connection failed']
     };
   }
+}
+
+// Fetch session info and members
+async function loadSessionInfo(sessionCode) {
+  if (!sessionCode || sessionCode.length !== 7) {
+    hideSessionInfo();
+    return;
+  }
+
+  try {
+    // Show loading state
+    sessionInfoSection.style.display = 'block';
+    sessionName.textContent = 'Loading...';
+    memberList.innerHTML = '<div class="loading">Loading members...</div>';
+
+    // Fetch session details
+    const sessionResponse = await fetch(`${API_ROOT}/sessions/${sessionCode}`);
+    if (!sessionResponse.ok) {
+      throw new Error('Session not found');
+    }
+    const sessionData = await sessionResponse.json();
+
+    if (sessionData.success && sessionData.data) {
+      const session = sessionData.data;
+      sessionName.textContent = session.session_name || `Session ${sessionCode}`;
+
+      // Fetch session members
+      const membersResponse = await fetch(`${API_ROOT}/sessions/${sessionCode}/members?active_only=true`);
+      if (membersResponse.ok) {
+        const membersData = await membersResponse.json();
+        if (membersData.success && membersData.data) {
+          displayMembers(membersData.data);
+        } else {
+          memberList.innerHTML = '<div class="empty-state">No active members</div>';
+        }
+      } else {
+        memberList.innerHTML = '<div class="empty-state">Unable to load members</div>';
+      }
+    } else {
+      hideSessionInfo();
+    }
+  } catch (error) {
+    console.error('Error loading session info:', error);
+    sessionInfoSection.style.display = 'none';
+  }
+}
+
+// Display team members
+function displayMembers(members) {
+  if (!members || members.length === 0) {
+    memberList.innerHTML = '<div class="empty-state">No active members</div>';
+    return;
+  }
+
+  memberList.innerHTML = members.map(member => {
+    const initials = member.user_name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2) || '?';
+    
+    return `
+      <div class="member-item">
+        <div class="member-avatar">${initials}</div>
+        <div class="member-info">
+          <div class="member-name">${member.user_name || 'Unknown'}</div>
+          <div class="member-code">${member.user_code}</div>
+        </div>
+        <div class="member-status" title="Active"></div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Hide session info section
+function hideSessionInfo() {
+  sessionInfoSection.style.display = 'none';
 }
 
 // Show validation error with dashboard link
@@ -154,13 +251,13 @@ startBtn.addEventListener('click', async () => {
   hideValidationError();
 
   // Basic format validation
-  if (!userCode || userCode === '') {
-    showValidationError('Please enter a valid User Code');
+  if (!userCode || userCode.length !== 7) {
+    showValidationError('Please enter a valid 7-character User Code');
     return;
   }
 
-  if (!sessionCode || sessionCode === '') {
-    showValidationError('Please enter a Session Code');
+  if (!sessionCode || sessionCode.length !== 7) {
+    showValidationError('Please enter a valid 7-character Session Code');
     return;
   }
 
@@ -176,12 +273,15 @@ startBtn.addEventListener('click', async () => {
       // Show error and prompt to navigate to dashboard
       showValidationError(validationResult.message || 'Invalid user code or session code');
       startBtn.disabled = false;
-      startBtn.textContent = 'Start Recording';
+      startBtn.textContent = 'Start';
       return;
     }
 
     // Validation passed - proceed with recording
     console.log('Validation passed:', validationResult.data);
+
+    // Load session info if not already loaded
+    await loadSessionInfo(sessionCode);
 
     // Save codes to storage
     await chrome.storage.local.set({
@@ -204,7 +304,7 @@ startBtn.addEventListener('click', async () => {
     console.error('Error starting recording:', error);
     showValidationError('Failed to start recording. Please try again.');
     startBtn.disabled = false;
-    startBtn.textContent = 'Start Recording';
+    startBtn.textContent = 'Start';
   }
 });
 
@@ -229,6 +329,3 @@ stopBtn.addEventListener('click', async () => {
     alert('Failed to stop recording');
   }
 });
-
-// No export functionality needed - auto-saves to backend
-

@@ -16,13 +16,12 @@ let retryAttempts = 0;
 let maxRetries = 5;
 let baseRetryDelay = 1000; // Start with 1 second
 
-// Initialize extension
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('Browser Navigation Tracker installed');
-  addEvent('EXTENSION_LOADED', {});
-
-  // Context menu for sending selected text to Pages
+// Initialize context menus (called on install and startup)
+async function initializeContextMenus() {
   try {
+    // Remove existing menus first to avoid duplicates
+    await chrome.contextMenus.removeAll();
+    
     chrome.contextMenus.create({
       id: 'cb_send_to_pages',
       title: 'Send selection to CoBrowser Pages',
@@ -36,7 +35,71 @@ chrome.runtime.onInstalled.addListener(() => {
   } catch (e) {
     console.warn('Failed to create context menu:', e);
   }
+}
+
+// Restore recording state from storage (called on service worker startup)
+async function restoreRecordingState() {
+  try {
+    const result = await chrome.storage.local.get([
+      'user_code',
+      'session_code',
+      'is_recording'
+    ]);
+
+    if (result.is_recording && result.user_code && result.session_code) {
+      console.log('🔄 Restoring recording state from storage');
+      console.log(`   User: ${result.user_code}, Session: ${result.session_code}`);
+      
+      // Restore recording state
+      isRecording = true;
+      recordingData = {
+        user_code: String(result.user_code).toUpperCase(),
+        session_code: String(result.session_code),
+        recording_started_at: new Date().toISOString(), // Will be updated on next save
+        recording_ended_at: null,
+        navigation_events: []
+      };
+      
+      // Mark that we're resuming (not starting fresh)
+      addEvent('EXTENSION_RESUMED', {
+        restored_from_storage: true
+      });
+      
+      console.log('✓ Recording state restored - tracking resumed');
+    } else {
+      console.log('ℹ No active recording to restore');
+    }
+  } catch (error) {
+    console.error('Error restoring recording state:', error);
+  }
+}
+
+// Initialize extension on install/update
+chrome.runtime.onInstalled.addListener(async () => {
+  console.log('📦 Browser Navigation Tracker installed/updated');
+  await initializeContextMenus();
+  
+  // Only add EXTENSION_LOADED event if we're actually recording
+  if (isRecording) {
+    addEvent('EXTENSION_LOADED', {});
+  }
 });
+
+// Initialize extension on browser/Chrome startup
+chrome.runtime.onStartup.addListener(async () => {
+  console.log('🚀 Browser Navigation Tracker - Browser startup detected');
+  await initializeContextMenus();
+  await restoreRecordingState();
+});
+
+// Also restore state when service worker wakes up (Manifest V3)
+// This runs immediately when the service worker script loads
+(async () => {
+  console.log('⚡ Browser Navigation Tracker - Service Worker starting');
+  await initializeContextMenus();
+  await restoreRecordingState();
+  console.log('✓ Service Worker initialized');
+})();
 
 // Pending clip payload is stored in session storage so it survives service worker suspension.
 const PENDING_CLIP_KEY = 'cb_pending_clip';
