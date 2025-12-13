@@ -88,15 +88,16 @@ export default function AuthPage({ onLogin, onSignup }) {
           {/* Left: Bigger header / branding */}
           <div className="px-1">
             <div className="mb-5 flex items-center gap-4">
-              <div
-                className="flex h-14 w-14 items-center justify-center rounded-xl"
+              <img 
+                src="/Sidekick.png" 
+                alt="Sidekick Logo" 
+                className="h-14 w-14 rounded-xl object-contain"
                 style={{
                   background: 'var(--color-surface-dark)',
                   border: '1px solid var(--color-border)',
+                  padding: '8px'
                 }}
-              >
-                <Shield size={22} style={{ color: 'var(--color-text-primary)' }} />
-              </div>
+              />
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
                   CoBrowser

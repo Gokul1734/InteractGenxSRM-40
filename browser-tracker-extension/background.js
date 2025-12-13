@@ -17,7 +17,7 @@ let maxRetries = 5;
 let baseRetryDelay = 1000; // Start with 1 second
 
 // Callout polling state
-let calloutPollInterval = null;
+const CALLOUT_ALARM_NAME = 'callout_poll_alarm';
 let lastCalloutTimestamp = null;
 let seenCalloutIds = new Set(); // Track callouts we've already shown
 
@@ -48,7 +48,10 @@ async function restoreRecordingState() {
     const result = await chrome.storage.local.get([
       'user_code',
       'session_code',
-      'is_recording'
+      'is_recording',
+      'callout_poll_active',
+      'callout_last_timestamp',
+      'callout_seen_ids'
     ]);
 
     if (result.is_recording && result.user_code && result.session_code) {
@@ -68,17 +71,33 @@ async function restoreRecordingState() {
         navigation_events: []
       };
       
+      // Restore callout polling state
+      if (result.callout_last_timestamp) {
+        lastCalloutTimestamp = result.callout_last_timestamp;
+      }
+      if (result.callout_seen_ids) {
+        seenCalloutIds = new Set(result.callout_seen_ids);
+      }
+      
       // Mark that we're resuming (not starting fresh)
       addEvent('EXTENSION_RESUMED', {
         restored_from_storage: true
       });
       
-      // Restart callout polling
-      startCalloutPolling(normalizedUserCode, normalizedSessionCode);
+      // Check if callout polling alarm exists, if not restart it
+      const existingAlarm = await chrome.alarms.get(CALLOUT_ALARM_NAME);
+      if (!existingAlarm) {
+        console.log('📢 Restarting callout polling alarm...');
+        await startCalloutPolling(normalizedUserCode, normalizedSessionCode);
+      } else {
+        console.log('📢 Callout polling alarm already exists');
+      }
       
       console.log('✓ Recording state restored - tracking resumed');
     } else {
       console.log('ℹ No active recording to restore');
+      // Make sure callout polling is stopped
+      await stopCalloutPolling();
     }
   } catch (error) {
     console.error('Error restoring recording state:', error);
@@ -383,57 +402,123 @@ async function createCallout(userCode, sessionCode, message = '') {
 }
 
 // ============================================================================
-// CALLOUT POLLING & NOTIFICATIONS
+// CALLOUT POLLING & NOTIFICATIONS (using Chrome Alarms for reliability)
 // ============================================================================
 
 /**
- * Start polling for new callouts in the session
+ * Start polling for new callouts in the session using Chrome Alarms API
+ * This survives service worker suspension in Manifest V3
  */
-function startCalloutPolling(userCode, sessionCode) {
+async function startCalloutPolling(userCode, sessionCode) {
   // Stop any existing polling
-  stopCalloutPolling();
+  await stopCalloutPolling();
   
   console.log('📢 Starting callout polling for session:', sessionCode);
   
-  // Reset state
-  lastCalloutTimestamp = new Date().toISOString();
+  // Store polling state in chrome.storage for persistence
+  const now = new Date().toISOString();
+  await chrome.storage.local.set({
+    callout_poll_active: true,
+    callout_poll_user: userCode.toUpperCase(),
+    callout_poll_session: sessionCode,
+    callout_last_timestamp: now,
+    callout_seen_ids: []
+  });
+  
+  // Reset local state
+  lastCalloutTimestamp = now;
   seenCalloutIds.clear();
   
-  // Poll immediately, then every 5 seconds
-  pollForCallouts(userCode, sessionCode);
+  // Poll immediately
+  await pollForCallouts(userCode, sessionCode);
   
-  calloutPollInterval = setInterval(() => {
-    pollForCallouts(userCode, sessionCode);
-  }, 5000); // Poll every 5 seconds
+  // Create alarm to poll every 5 seconds
+  // Note: Chrome alarms have a minimum of 1 minute in production, but we'll use 0.1 (6 seconds) for testing
+  await chrome.alarms.create(CALLOUT_ALARM_NAME, {
+    periodInMinutes: 0.1 // ~6 seconds (minimum supported)
+  });
+  
+  console.log('📢 Callout alarm created');
 }
 
 /**
  * Stop callout polling
  */
-function stopCalloutPolling() {
-  if (calloutPollInterval) {
-    clearInterval(calloutPollInterval);
-    calloutPollInterval = null;
+async function stopCalloutPolling() {
+  try {
+    await chrome.alarms.clear(CALLOUT_ALARM_NAME);
+    await chrome.storage.local.set({
+      callout_poll_active: false
+    });
     console.log('📢 Stopped callout polling');
+  } catch (e) {
+    console.warn('Error stopping callout polling:', e);
   }
 }
+
+/**
+ * Handle alarm events - this is called when the alarm fires
+ */
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === CALLOUT_ALARM_NAME) {
+    console.log('⏰ Callout poll alarm triggered');
+    
+    // Get stored polling state
+    const state = await chrome.storage.local.get([
+      'callout_poll_active',
+      'callout_poll_user',
+      'callout_poll_session',
+      'callout_last_timestamp',
+      'callout_seen_ids',
+      'is_recording'
+    ]);
+    
+    if (state.callout_poll_active && state.is_recording && state.callout_poll_session) {
+      // Restore local state from storage
+      lastCalloutTimestamp = state.callout_last_timestamp || new Date().toISOString();
+      seenCalloutIds = new Set(state.callout_seen_ids || []);
+      
+      // Poll for callouts
+      await pollForCallouts(state.callout_poll_user, state.callout_poll_session);
+    } else {
+      // Stop polling if not recording
+      await stopCalloutPolling();
+    }
+  }
+});
 
 /**
  * Poll for new callouts and notify user
  */
 async function pollForCallouts(userCode, sessionCode) {
-  if (!isRecording || !sessionCode) return;
+  if (!sessionCode) return;
+  
+  // Check if still recording
+  const state = await chrome.storage.local.get(['is_recording']);
+  if (!state.is_recording) {
+    console.log('📢 Not recording, skipping poll');
+    return;
+  }
+  
+  console.log('📢 Polling for callouts...', { userCode, sessionCode });
   
   try {
     // Build URL with query params
     const params = new URLSearchParams({
-      exclude_user: userCode.toUpperCase(),
-      since: lastCalloutTimestamp
+      exclude_user: userCode.toUpperCase()
     });
+    
+    // Only add 'since' if we have a timestamp
+    if (lastCalloutTimestamp) {
+      params.append('since', lastCalloutTimestamp);
+    }
     
     const response = await fetch(
       `${API_ROOT}/callouts/session/${sessionCode}/active?${params}`,
-      { method: 'GET' }
+      { 
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      }
     );
     
     if (!response.ok) {
@@ -442,23 +527,39 @@ async function pollForCallouts(userCode, sessionCode) {
     }
     
     const result = await response.json();
+    console.log('📢 Poll result:', result.success, 'count:', result.data?.length || 0);
     
     if (result.success && result.data && result.data.length > 0) {
       // Update timestamp for next poll
       lastCalloutTimestamp = result.timestamp || new Date().toISOString();
       
       // Process new callouts
+      let newCalloutCount = 0;
       for (const callout of result.data) {
         // Skip if we've already seen this callout
-        if (seenCalloutIds.has(callout._id)) continue;
+        if (seenCalloutIds.has(callout._id)) {
+          console.log('📢 Skipping seen callout:', callout._id);
+          continue;
+        }
         
         // Mark as seen
         seenCalloutIds.add(callout._id);
+        newCalloutCount++;
         
         console.log('📢 New callout detected:', callout._id, 'from', callout.user_name);
         
         // Show notification to user
         await showCalloutNotificationToUser(callout);
+      }
+      
+      // Persist updated state
+      await chrome.storage.local.set({
+        callout_last_timestamp: lastCalloutTimestamp,
+        callout_seen_ids: Array.from(seenCalloutIds)
+      });
+      
+      if (newCalloutCount > 0) {
+        console.log(`📢 Processed ${newCalloutCount} new callout(s)`);
       }
     }
   } catch (error) {
@@ -468,63 +569,109 @@ async function pollForCallouts(userCode, sessionCode) {
 
 /**
  * Show callout notification to user via content script
+ * Tries multiple methods to ensure notification is shown
  */
 async function showCalloutNotificationToUser(callout) {
+  console.log('📢 Showing notification for callout:', callout._id);
+  
+  let notificationShown = false;
+  
   try {
-    // Get all tabs to notify
+    // Get all tabs
     const tabs = await chrome.tabs.query({});
     
-    // Find the active tab in the focused window
-    const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    // Find the active tab in the current window
+    const activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const activeTab = activeTabs[0];
     
     // First, try to show on the active tab
-    if (activeTab && !activeTab.url.startsWith('chrome://') && !activeTab.url.startsWith('chrome-extension://')) {
+    if (activeTab && activeTab.url && isValidTabUrl(activeTab.url)) {
       try {
-        await chrome.tabs.sendMessage(activeTab.id, {
+        const response = await chrome.tabs.sendMessage(activeTab.id, {
           action: 'CB_SHOW_CALLOUT_NOTIFICATION',
           callout: callout
         });
-        console.log('📢 Notification sent to active tab:', activeTab.id);
-        return; // Success, don't show on other tabs
+        if (response && response.success) {
+          console.log('📢 Notification shown on active tab:', activeTab.id);
+          notificationShown = true;
+        }
       } catch (e) {
-        console.warn('Could not send to active tab:', e.message);
+        console.log('📢 Active tab unavailable, trying other tabs...');
       }
     }
     
-    // Fallback: try other tabs
-    for (const tab of tabs) {
-      if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
-        try {
-          await chrome.tabs.sendMessage(tab.id, {
-            action: 'CB_SHOW_CALLOUT_NOTIFICATION',
-            callout: callout
-          });
-          console.log('📢 Notification sent to tab:', tab.id);
-          return; // Success
-        } catch (e) {
-          // Content script not loaded on this tab, try next
+    // If not shown yet, try all other tabs
+    if (!notificationShown) {
+      for (const tab of tabs) {
+        if (tab.url && isValidTabUrl(tab.url) && tab.id !== activeTab?.id) {
+          try {
+            const response = await chrome.tabs.sendMessage(tab.id, {
+              action: 'CB_SHOW_CALLOUT_NOTIFICATION',
+              callout: callout
+            });
+            if (response && response.success) {
+              console.log('📢 Notification shown on tab:', tab.id);
+              notificationShown = true;
+              break;
+            }
+          } catch (e) {
+            // Content script not loaded on this tab, continue
+          }
         }
       }
     }
     
-    // If all else fails, use Chrome notification API
-    chrome.notifications.create({
+    // Always show Chrome notification as backup (appears in system tray)
+    showChromeNotification(callout);
+    
+  } catch (error) {
+    console.error('Error showing callout notification:', error);
+    // Fallback to Chrome notification
+    showChromeNotification(callout);
+  }
+}
+
+/**
+ * Check if tab URL is valid for content script
+ */
+function isValidTabUrl(url) {
+  return url && 
+    !url.startsWith('chrome://') && 
+    !url.startsWith('chrome-extension://') && 
+    !url.startsWith('about:') &&
+    !url.startsWith('edge://') &&
+    !url.startsWith('brave://');
+}
+
+/**
+ * Show Chrome system notification
+ */
+function showChromeNotification(callout) {
+  const iconDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGASURBVFhH7ZY9TsMwGIZdlYUJVmZuwMTIyMgNOAIHYGRkZOQG3ICJkZGRGzAxMnIDsqCqSL+8dpyf2nFSp1JFeKRPseN837OJEzsJJSYm5r8xDAL7TirZ6qJu8hIEwmCw2+0Okyb0/NRLB4MgEMcHg6DrA+d+6qeOFJuBqoJ7J99YYPd8fAuwJpbLgMYS/TsLqGYCq9VqJ5MNnU6n0Wx4vTOBZgI4S7SQ1x0oEvgNAk2UHoLAcQTq1mhbNxL4KdBMA0UCP0Wgmd6vn/oJWAK4hCYBnAfUAmC324W7+/sTEZ+0Wq1n8p8JNNPAeYAv0IH7x8cTEd+USqUFYT8BnAeqAeCCEhWK+IIQXhLqBHACdRZQi4DneV9i+73X622I+8T9JZALwOv3+5fEve/7W+I3YjcBnEAdBE4qlUqb+Cd5Pxf3iF0FcAJlAji/BX7k+Xwe5fO8I7YVwAnkApD+FgifCoXCO/mIuC4ATiANAH8B7vr1el1F/IW4SwDnP5BI/AFTQIorMl9fdgAAAABJRU5ErkJggg==';
+  
+  try {
+    chrome.notifications.create(`callout_${callout._id}`, {
       type: 'basic',
-      iconUrl: 'icon.svg',
+      iconUrl: iconDataUrl,
       title: `📢 Callout from ${callout.user_name}`,
       message: callout.message || `Check out: ${callout.page_title || callout.page_url}`,
       priority: 2,
       requireInteraction: true
     }, (notificationId) => {
+      if (chrome.runtime.lastError) {
+        console.warn('Chrome notification error:', chrome.runtime.lastError.message);
+        return;
+      }
+      console.log('📢 Chrome notification created:', notificationId);
       // Store callout data for when notification is clicked
-      chrome.storage.local.set({
-        [`notification_${notificationId}`]: callout
-      });
+      if (notificationId) {
+        chrome.storage.local.set({
+          [`notification_${notificationId}`]: callout
+        });
+      }
     });
-    
   } catch (error) {
-    console.error('Error showing callout notification:', error);
+    console.error('Error creating Chrome notification:', error);
   }
 }
 
@@ -918,7 +1065,7 @@ async function stopRecording() {
   isRecording = false;
   
   // Stop callout polling
-  stopCalloutPolling();
+  await stopCalloutPolling();
   
   if (recordingData) {
     recordingData.recording_ended_at = new Date().toISOString();

@@ -42,16 +42,17 @@ export default function TopNav({ activeKey, onNavigate, user, onLogout, onNotifi
         {/* Left: Brand */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <div
-              className="h-10 w-10 rounded-lg"
-              style={{ background: 'var(--color-primary)' }}
+            <img 
+              src="/Sidekick.png" 
+              alt="Sidekick Logo" 
+              className="h-10 w-10 rounded-lg object-contain"
             />
             <div className="leading-tight">
               <div className="text-base font-semibold" style={{ color: 'var(--color-text-title)' }}>
-                CoBrowser
+                Sidekick
               </div>
               <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                Dashboard
+                Co-Browsing Dashboard
               </div>
             </div>
           </div>
