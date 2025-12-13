@@ -14,6 +14,8 @@ const invitationsRoutes = require('./routes/invitations');
 const pagesRoutes = require('./routes/pages');
 const calloutsRoutes = require('./routes/callouts');
 const teamAnalysisRoutes = require('./routes/teamAnalysis');
+const ingestionRoutes = require('./routes/ingestion');
+const chatbotRoutes = require('./routes/chatbot');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -51,6 +53,9 @@ app.use('/api/invitations', invitationsRoutes);
 app.use('/api/pages', pagesRoutes);
 app.use('/api/callouts', calloutsRoutes);
 app.use('/api/team-analysis', teamAnalysisRoutes);
+app.use('/api/ingestion', ingestionRoutes);
+app.use('/api/chatbot', chatbotRoutes);
+app.use('/api/chatbot', require('./routes/chatbot'));
 
 // Health check
 app.get('/', (req, res) => res.send({ ok: true }));

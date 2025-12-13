@@ -173,6 +173,18 @@ const getUserPendingInvitations = async (req, res) => {
       });
     }
 
+    // Check if MongoDB is connected
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1) {
+      // MongoDB not connected, return empty result
+      return res.status(200).json({
+        success: true,
+        user_code: user_code.toUpperCase(),
+        count: 0,
+        data: []
+      });
+    }
+
     // Verify user exists
     const user = await User.findOne({ user_code: user_code.toUpperCase() });
     if (!user) {
@@ -188,15 +200,15 @@ const getUserPendingInvitations = async (req, res) => {
     const invitationsData = invitations.map(inv => ({
       invitation_id: inv._id,
       session: {
-        session_code: inv.session.session_code,
-        session_name: inv.session.session_name,
-        session_description: inv.session.session_description,
-        is_active: inv.session.is_active
+        session_code: inv.session?.session_code || null,
+        session_name: inv.session?.session_name || null,
+        session_description: inv.session?.session_description || null,
+        is_active: inv.session?.is_active || false
       },
       invited_by: {
-        user_code: inv.invited_by.user_code,
-        user_name: inv.invited_by.user_name,
-        user_email: inv.invited_by.user_email
+        user_code: inv.invited_by?.user_code || null,
+        user_name: inv.invited_by?.user_name || null,
+        user_email: inv.invited_by?.user_email || null
       },
       message: inv.message,
       status: inv.status,

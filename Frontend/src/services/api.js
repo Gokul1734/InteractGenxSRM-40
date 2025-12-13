@@ -433,12 +433,66 @@ export const trackingAPI = {
   },
 };
 
+// ==================== INGESTION APIs ====================
+
+export const ingestionAPI = {
+  // Ingest sources (pages and websites)
+  ingest: async (sources, sessionCode = null, userCode = null) => {
+    return apiRequest('/ingestion/ingest', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        sources, 
+        session_code: sessionCode,
+        user_code: userCode 
+      }),
+    });
+  },
+
+  // Get ingested content
+  getContent: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    return apiRequest(`/ingestion/content${queryString ? `?${queryString}` : ''}`);
+  },
+
+  // Check if sources are already ingested
+  checkIngested: async (sources, sessionCode) => {
+    return apiRequest('/ingestion/check', {
+      method: 'POST',
+      body: JSON.stringify({ sources, session_code: sessionCode }),
+    });
+  },
+};
+
+// ==================== CHATBOT APIs ====================
+
+export const chatbotAPI = {
+  // Query chatbot with selected ingested sources
+  query: async (prompt, sourceIds, sessionCode, userCode) => {
+    return apiRequest('/chatbot/query', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        prompt, 
+        source_ids: sourceIds,
+        session_code: sessionCode,
+        user_code: userCode
+      }),
+    });
+  },
+  
+  // Get chat history for a session
+  getHistory: async (sessionCode) => {
+    return apiRequest(`/chatbot/history/${sessionCode}`);
+  },
+};
+
 export default {
+  chatbotAPI,
   user: userAPI,
   session: sessionAPI,
   invitation: invitationAPI,
   tracking: trackingAPI,
   callout: calloutAPI,
   teamAnalysis: teamAnalysisAPI,
+  ingestion: ingestionAPI,
 };
 
