@@ -10,7 +10,8 @@
     "webNavigation",
     "contextMenus",
     "activeTab",
-    "notifications"
+    "notifications",
+    "alarms"
   ],
   "host_permissions": [
     "http://localhost:5000/*",
