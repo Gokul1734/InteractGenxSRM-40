@@ -188,10 +188,10 @@ function injectCalloutStyles() {
       right: 20px;
       z-index: 2147483647;
       width: 380px;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      border: 1px solid rgba(255, 159, 10, 0.3);
+      background: linear-gradient(135deg, #1C1C1E 0%, #161618 100%);
+      border: 1px solid rgba(91, 107, 158, 0.3);
       border-radius: 16px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(255, 159, 10, 0.15);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(91, 107, 158, 0.15);
       padding: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
       color: #E5E5EA;
@@ -199,12 +199,12 @@ function injectCalloutStyles() {
       overflow: hidden;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-header {
-      background: linear-gradient(135deg, rgba(255, 159, 10, 0.2) 0%, rgba(255, 159, 10, 0.05) 100%);
+      background: linear-gradient(135deg, rgba(91, 107, 158, 0.2) 0%, rgba(91, 107, 158, 0.05) 100%);
       padding: 14px 16px;
       display: flex;
       align-items: center;
       gap: 12px;
-      border-bottom: 1px solid rgba(255, 159, 10, 0.2);
+      border-bottom: 1px solid rgba(91, 107, 158, 0.2);
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-icon {
       font-size: 24px;
@@ -216,7 +216,7 @@ function injectCalloutStyles() {
     #${CALLOUT_NOTIFICATION_ID} .cb-title {
       font-size: 14px;
       font-weight: 700;
-      color: #FF9F0A;
+      color: #7B8BB8;
       margin-bottom: 2px;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-subtitle {
@@ -250,13 +250,13 @@ function injectCalloutStyles() {
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      background: linear-gradient(135deg, #FF9F0A 0%, #E68A00 100%);
+      background: linear-gradient(135deg, #5B6B9E 0%, #4A5887 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 16px;
       font-weight: 700;
-      color: #1a1a2e;
+      color: #FFFFFF;
       flex-shrink: 0;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-user-info {
@@ -282,7 +282,7 @@ function injectCalloutStyles() {
       font-size: 13px;
       color: #D1D1D6;
       line-height: 1.5;
-      border-left: 3px solid #FF9F0A;
+      border-left: 3px solid #5B6B9E;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-page-info {
       background: rgba(0, 0, 0, 0.2);
@@ -301,20 +301,20 @@ function injectCalloutStyles() {
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-page-url {
       font-size: 11px;
-      color: #5B9BD5;
+      color: #7B8BB8;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-selection {
-      background: rgba(255, 159, 10, 0.1);
+      background: rgba(91, 107, 158, 0.1);
       border-radius: 8px;
       padding: 10px 12px;
       margin-bottom: 14px;
       font-size: 12px;
-      color: #FFD699;
+      color: #A8B4D4;
       font-style: italic;
-      border: 1px dashed rgba(255, 159, 10, 0.3);
+      border: 1px dashed rgba(91, 107, 158, 0.3);
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-selection::before {
       content: '"';
@@ -341,22 +341,24 @@ function injectCalloutStyles() {
       gap: 8px;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-btn-primary {
-      background: linear-gradient(135deg, #FF9F0A 0%, #E68A00 100%);
-      color: #1a1a2e;
+      background: linear-gradient(135deg, #5B6B9E 0%, #4A5887 100%);
+      color: #FFFFFF;
+      border: 1px solid #4A5887;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-btn-primary:hover {
-      background: linear-gradient(135deg, #FFB340 0%, #FF9F0A 100%);
+      background: linear-gradient(135deg, #6575A8 0%, #5B6B9E 100%);
       transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(255, 159, 10, 0.4);
+      box-shadow: 0 6px 20px rgba(91, 107, 158, 0.4);
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-btn-secondary {
-      background: rgba(255, 255, 255, 0.1);
+      background: linear-gradient(135deg, #2C2C2E 0%, #1C1C1E 100%);
       color: #8E8E93;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid #3A3A3C;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.15);
-      color: #E5E5EA;
+      background: linear-gradient(135deg, #3A3A3C 0%, #2C2C2E 100%);
+      color: #AEAEB2;
+      border-color: #48484A;
     }
     #${CALLOUT_NOTIFICATION_ID} .cb-time {
       text-align: center;
@@ -446,9 +448,6 @@ function showCalloutNotification(callout) {
   
   // Add to page
   document.documentElement.appendChild(notification);
-  
-  // Play notification sound (optional - browsers may block this)
-  playNotificationSound();
   
   // Auto-dismiss after 30 seconds
   setTimeout(() => {
@@ -553,11 +552,11 @@ function showScrollHighlight(y) {
     left: 0;
     right: 0;
     height: 150px;
-    background: linear-gradient(180deg, rgba(255, 159, 10, 0.4) 0%, rgba(255, 159, 10, 0.1) 50%, transparent 100%);
+    background: linear-gradient(180deg, rgba(91, 107, 158, 0.4) 0%, rgba(91, 107, 158, 0.1) 50%, transparent 100%);
     pointer-events: none;
     z-index: 2147483646;
-    border-top: 3px solid #FF9F0A;
-    box-shadow: 0 0 30px rgba(255, 159, 10, 0.5);
+    border-top: 3px solid #5B6B9E;
+    box-shadow: 0 0 30px rgba(91, 107, 158, 0.5);
   `;
   
   // Add pulsing animation
@@ -590,29 +589,6 @@ function showScrollHighlight(y) {
     highlight.remove();
     style.remove();
   }, 3000);
-}
-
-// Play notification sound
-function playNotificationSound() {
-  try {
-    // Create a simple beep using Web Audio API
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.frequency.value = 800;
-    oscillator.type = 'sine';
-    gainNode.gain.value = 0.1;
-    
-    oscillator.start();
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-    oscillator.stop(audioContext.currentTime + 0.3);
-  } catch (e) {
-    // Audio not supported or blocked
-  }
 }
 
 // Acknowledge callout via background script
