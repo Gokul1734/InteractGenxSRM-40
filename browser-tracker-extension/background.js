@@ -509,18 +509,27 @@ async function showCalloutNotificationToUser(callout) {
     }
     
     // If all else fails, use Chrome notification API
+    // Using a simple data URL for the icon to avoid SVG format issues
+    const iconDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGASURBVFhH7ZY9TsMwGIZdlYUJVmZuwMTIyMgNOAIHYGRkZOQG3ICJkZGRGzAxMnIDsqCqSL+8dpyf2nFSp1JFeKRPseN837OJEzsJJSYm5r8xDAL7TirZ6qJu8hIEwmCw2+0Okyb0/NRLB4MgEMcHg6DrA+d+6qeOFJuBqoJ7J99YYPd8fAuwJpbLgMYS/TsLqGYCq9VqJ5MNnU6n0Wx4vTOBZgI4S7SQ1x0oEvgNAk2UHoLAcQTq1mhbNxL4KdBMA0UCP0Wgmd6vn/oJWAK4hCYBnAfUAmC324W7+/sTEZ+0Wq1n8p8JNNPAeYAv0IH7x8cTEd+USqUFYT8BnAeqAeCCEhWK+IIQXhLqBHACdRZQi4DneV9i+73X622I+8T9JZALwOv3+5fEve/7W+I3YjcBnEAdBE4qlUqb+Cd5Pxf3iF0FcAJlAji/BX7k+Xwe5fO8I7YVwAnkApD+FgifCoXCO/mIuC4ATiANAH8B7vr1el1F/IW4SwDnP5BI/AFTQIorMl9fdgAAAABJRU5ErkJggg==';
+    
     chrome.notifications.create({
       type: 'basic',
-      iconUrl: 'icon.svg',
+      iconUrl: iconDataUrl,
       title: `📢 Callout from ${callout.user_name}`,
       message: callout.message || `Check out: ${callout.page_title || callout.page_url}`,
       priority: 2,
       requireInteraction: true
     }, (notificationId) => {
+      // Check for errors but don't block
+      if (chrome.runtime.lastError) {
+        console.warn('Notification warning:', chrome.runtime.lastError.message);
+      }
       // Store callout data for when notification is clicked
-      chrome.storage.local.set({
-        [`notification_${notificationId}`]: callout
-      });
+      if (notificationId) {
+        chrome.storage.local.set({
+          [`notification_${notificationId}`]: callout
+        });
+      }
     });
     
   } catch (error) {
